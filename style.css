@@ -46,6 +46,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 .login label { display: grid; gap: 4px; font-size: 14px; color: var(--muted); }
 .login input { padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius); background: #fff; font-size: 16px; color: var(--fg); }
 .home-btns { display: flex; gap: 16px; justify-content: center; margin: 28px 0 18px; flex-wrap: wrap; }
+.center-box.home { max-width: 760px; }
 .grid4 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 24px 0; }
 .huge.g { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 0; }
 .huge.g small { font-size: 13px; font-weight: 400; opacity: .85; }
