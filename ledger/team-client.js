@@ -1,5 +1,5 @@
-import {readBook} from './core.js';
-import {api} from './firebase-ledger.js';
+import {readBook} from './core.js?v=cellfix-20261028-4';
+import {api} from './firebase-ledger.js?v=cellfix-20261028-4';
 export {api};
 export function mountTeam({cross,onRole}){
  const $=s=>document.querySelector(s);let role=null,work=null,openedId=null,poll=null,loading=false;

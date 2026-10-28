@@ -1,5 +1,5 @@
 import {FIREBASE_CONFIG} from '../store.js';
-import {createLedgerService} from './ledger-service.js';
+import {createLedgerService} from './ledger-service.js?v=cellfix-20261028-4';
 const FB='https://www.gstatic.com/firebasejs/10.12.2/';
 let servicePromise;
 if(new URLSearchParams(location.search).has('test')) {

@@ -1,9 +1,9 @@
-import {probationPlan,applyProbation} from './probation.js';
-import {mountTeam} from './team-client.js?v=header-20261028-3';
-import {meritTarget,meritRecords,meritPlan,applyMerits} from './merit.js';
-import {mountCrossCheck,splitReviewers} from './crosscheck.js?v=header-20261028-3';
-import {readBook,ledgerInfo,sourceSheets,defaultSourceSheets,palette,defaultYellows,extract,makeReview,ready,directExportPlan,exportBook,colName,norm} from './core.js';
-import {makeDemo,makeMeritDemo} from './fixtures.js';
+import {probationPlan,applyProbation} from './probation.js?v=cellfix-20261028-4';
+import {mountTeam} from './team-client.js?v=cellfix-20261028-4';
+import {meritTarget,meritRecords,meritPlan,applyMerits} from './merit.js?v=cellfix-20261028-4';
+import {mountCrossCheck,splitReviewers} from './crosscheck.js?v=cellfix-20261028-4';
+import {readBook,ledgerInfo,sourceSheets,defaultSourceSheets,palette,defaultYellows,extract,makeReview,ready,directExportPlan,exportBook,colName,norm} from './core.js?v=cellfix-20261028-4';
+import {makeDemo,makeMeritDemo} from './fixtures.js?v=cellfix-20261028-4';
 const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)],esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let ledger=null,source=null,info=null,sources=[],reviews=[],filter='all',page=0,selectedRound=null,reviewKey=null,busy=false,revision=0;
 const colors=new Set(defaultYellows),selectedTabs=new Set();

@@ -1,4 +1,4 @@
-import {colName,norm} from './core.js';
+import {colName,norm} from './core.js?v=cellfix-20261028-4';
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 // Remove yellow-excluded verdicts before grouping/counting students.
 // Keep remaining verdicts together; never infer an ambiguous ledger match.
@@ -28,7 +28,7 @@ export function targetScroll(container,cell){
  return {top:Math.max(0,Math.min(top,Math.max(0,container.scrollHeight-container.clientHeight))),left:Math.max(0,Math.min(left,Math.max(0,container.scrollWidth-container.clientWidth)))};
 }
 export function mountCrossCheck({download,complete}){const $=s=>document.querySelector(s),screen=$('#cross-screen');let data,parts,member=0;
- function renderSheet(index){const sheet=data.book.sheets[index];if(!sheet)return;const round=sheet.name==='벌점'?data.round:data.meritRound;try{const view=roundView(sheet,round);$('#cross-ledger').innerHTML=roundGrid(sheet,view);$('#cross-ledger').scrollTop=0;$('#cross-ledger').scrollLeft=0;}catch(e){$('#cross-ledger').textContent=e.message;}}
+ function renderSheet(index){const sheet=data.book.sheets[index];if(!sheet)return;const round=sheet.name==='벌점'?data.round:data.meritRound;try{const view=roundView(sheet,round);$('#cross-ledger').innerHTML=roundGrid(sheet,view);$('#cross-ledger').scrollTop=0;$('#cross-ledger').scrollLeft=0;}catch(e){$('#cross-ledger').textContent=e.message+' 기존 공유 결과에 헤더가 없으면 원본 누계와 좌석리스트로 다시 생성·공유해 주세요.';}}
  function focusStudent(group){
   document.querySelectorAll('.cross-student.selected').forEach(b=>b.classList.remove('selected'));
   if(!group.student){$('#cross-location').textContent=group.name+' · 명부에서 정확히 매칭되지 않아 이동할 수 없습니다. 제외 사유를 확인하세요.';return;}
