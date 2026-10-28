@@ -1,7 +1,7 @@
 import {probationPlan,applyProbation} from './probation.js';
-import {mountTeam} from './team-client.js?v=cross-20261028-2';
+import {mountTeam} from './team-client.js?v=header-20261028-3';
 import {meritTarget,meritRecords,meritPlan,applyMerits} from './merit.js';
-import {mountCrossCheck,splitReviewers} from './crosscheck.js?v=cross-20261028-2';
+import {mountCrossCheck,splitReviewers} from './crosscheck.js?v=header-20261028-3';
 import {readBook,ledgerInfo,sourceSheets,defaultSourceSheets,palette,defaultYellows,extract,makeReview,ready,directExportPlan,exportBook,colName,norm} from './core.js';
 import {makeDemo,makeMeritDemo} from './fixtures.js';
 const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)],esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
