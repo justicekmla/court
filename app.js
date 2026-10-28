@@ -126,7 +126,7 @@ function viewLogin() {
 function viewHome() {
   const sun = sundayOf(), mon = E.addDays(sun, -6);
   return '<div class="center-box home"><h1>법정리스트</h1>' +
-    '<div class="home-btns"><button class="primary huge" data-act="role" data-role="chief">법무부장</button><button class="outline huge" data-act="seat-arranger">법무부차장</button><button class="outline huge" data-act="role" data-role="member">법무부원</button></div>' +
+    '<div class="home-btns"><button class="primary huge" data-act="role" data-role="chief">법무부장</button><button class="outline huge" data-act="seat-arranger">법무부차장</button><button class="outline huge" data-act="role" data-role="member">법무부원</button><button class="outline huge" data-act="ledger">누계</button></div>' +
     '<p class="muted">' + (st().phase && st().phase !== 'idle' ? '진행 중: ' + E.fmtMD(mon) + '(월) ~ ' + E.fmtMD(sun) + '(일) · ' + phaseText() : '이번 주 정리를 아직 시작하지 않았습니다') + '</p>' +
     (LOCAL ? '<p class="test-note">시험 모드입니다. 이 브라우저에만 저장되며 다른 사람과 공유되지 않습니다.</p>' : '') + '</div>';
 }
@@ -434,6 +434,7 @@ app.addEventListener('click', async ev => {
   switch (act) {
     case 'home': S.view = ''; setRole('', ''); break;
     case 'role': setRole(b.dataset.role, ''); break;
+    case 'ledger': { const url = new URL('./ledger/', import.meta.url); if (LOCAL) url.searchParams.set('test', ''); window.location.assign(url.href); break; }
     case 'seat-arranger': window.location.assign(new URL('./seats/', import.meta.url).href); break;
     case 'pick': setRole('member', b.dataset.g); break;
     case 'settings': S.view = 'settings'; render(); break;
