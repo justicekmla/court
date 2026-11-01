@@ -33,6 +33,15 @@ export async function firebaseStore() {
     async signIn(email, pw) { await U.signInWithEmailAndPassword(auth, email, pw); },
     async signOut() { await U.signOut(auth); },
     watch(path, cb, onErr) { return F.onSnapshot(ref(path), s => cb(s.exists() ? dec(s.data()) : null), e => onErr && onErr(e)); },
+    async transaction(fn) {
+      return F.runTransaction(db, async transaction => {
+        await fn({
+          async get(path) { const snap = await transaction.get(ref(path)); return snap.exists() ? dec(snap.data()) : null; },
+          set(path, data) { transaction.set(ref(path), enc(data)); },
+          del(path) { transaction.delete(ref(path)); }
+        });
+      });
+    },
     async get(path) { const s = await F.getDoc(ref(path)); return s.exists() ? dec(s.data()) : null; },
     async set(path, data) { await F.setDoc(ref(path), enc(data)); },
     async merge(path, data) { await F.setDoc(ref(path), enc(data), { merge: true }); },
@@ -70,6 +79,13 @@ export function localStore() {
     onAuth(cb) { setTimeout(() => cb({ email: '시험 모드' }), 0); return () => {}; },
     async signIn() {}, async signOut() {},
     watch(path, cb) { if (!subs.has(path)) subs.set(path, new Set()); subs.get(path).add(cb); setTimeout(() => cb(read(path)), 0); return () => subs.get(path).delete(cb); },
+    async transaction(fn) {
+      return navigator.locks.request('courtlist-test-write', async () => {
+        const ops = [];
+        await fn({ get: async path => read(path), set: (path, data) => ops.push([path, data]), del: path => ops.push([path, null]) });
+        for (const [path, data] of ops) write(path, data);
+      });
+    },
     async get(path) { return read(path); },
     async set(path, data) { write(path, data); },
     async merge(path, data) { write(path, deepMerge(read(path), data)); },
