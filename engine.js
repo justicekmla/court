@@ -561,6 +561,7 @@ export function sortRows(rows) {
     if (a.cnt !== b.cnt) return a.cnt > b.cnt ? -1 : 1;
     if (a.r.grade !== b.r.grade) return a.r.grade > b.r.grade ? -1 : 1;
     if (a.r.disp !== b.r.disp) return a.r.disp < b.r.disp ? -1 : 1;   // 매크로의 이진 비교와 같음
+    if (a.cnt >= 3 && a.r.art !== b.r.art) return a.r.art < b.r.art ? -1 : 1;
     const da = dn(a.r.date), db = dn(b.r.date); if (da !== db) return da < db ? -1 : 1;
     return a.seq - b.seq;
   });

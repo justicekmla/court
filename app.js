@@ -1,5 +1,7 @@
-import * as E from './engine.js';
-import * as IO from './io.js';
+import * as E from './engine.js?v=20261107';
+import * as M from './manual.js?v=20261107';
+import { createVersion2 } from './version2.js?v=20261107';
+import * as IO from './io.js?v=20261107';
 import { firebaseStore, localStore } from './store.js?v=uploads-20261101-1';
 
 // ================================================================ 공통
@@ -15,6 +17,9 @@ const uid = () => 'n' + Date.now().toString(36) + Math.random().toString(36).sli
 const clone = o => JSON.parse(JSON.stringify(o));
 
 let store = null;
+let version2;
+let chiefVersion = '';
+let reviewOpen = new Set();
 const S = {
   user: null, role: sessionStorage.getItem('cl-role') || '', group: sessionStorage.getItem('cl-group') || '',
   docs: { refs: undefined, state: undefined, posts: undefined, g_m: undefined, g_f: undefined, g_i: undefined, g_a: undefined, final: undefined, extras: undefined },
@@ -103,6 +108,8 @@ function render() {
   app.innerHTML = topbar() + '<main id="main">' + body + '</main>' + (S.modal ? '<div class="modal-bg"><div class="modal">' + S.modal + '</div></div>' : '');
   for (const el of app.querySelectorAll('[data-keep]')) if (el.dataset.keep in keep && !S.resetKeep) { if (el.type === 'checkbox') el.checked = keep[el.dataset.keep]; else el.value = keep[el.dataset.keep]; }
   for (const key of openUploads) { const el = app.querySelector('details[data-upload="' + key + '"]'); if (el) el.open = true; }
+  for (const prefix of ['v1','v2']) M.updatePicker(prefix, prefix==='v2' && version2 ? version2.context() : ctx(), true);
+  for(const prefix of ['v1','v2']) { const el=document.getElementById(prefix+'-person'); if(el && keep[prefix+'-person'] && !S.resetKeep) el.value=keep[prefix+'-person']; }
   S.resetKeep = false;
   window.scrollTo(0, y);
 }
@@ -138,10 +145,12 @@ function phaseText() { return { review: '크로스체크 단계', extras: '추�
 // ================================================================ 법무부장
 function viewChief() {
   if (S.view === 'settings') return viewSettings();
+  if (!chiefVersion) return '<div class="center-box home"><h1>법무부장용</h1><div class="home-btns"><button class="primary huge" data-act="version" data-version="1">버전1</button><button class="outline huge" data-act="version" data-version="2">버전2</button></div><p class="muted">버전1: 업무별 크로스체크 · 버전2: 법정리스트 파일 추가·삭제</p></div>';
+  if (chiefVersion === '2') return version2.view();
   if (!refsReady()) return viewNeedRefs();
   const ph = st().phase || 'idle';
   if (ph === 'idle') return viewPaste();
-  if (ph === 'review') return viewPaste() + (allDone() ? viewFinal() : viewWaiting());
+  if (ph === 'review') return viewPaste() + viewWaiting() + (E.GROUPS.some(g => gdoc(g)?.done) ? viewFinal() : '');
   if (ph === 'extras') return viewExtras();
   if (ph === 'list') return viewList();
   return viewPaste();
@@ -222,21 +231,50 @@ function viewWaiting() {
   }).join('');
   const n = E.GROUPS.filter(g => gdoc(g) && gdoc(g).done).length;
   return steps(2) + '<div class="panel narrow center"><h2>법무부원 크로스체크 진행 중…</h2>' +
-    '<div class="progress"><div style="width:' + (n * 25) + '%"></div></div><p class="muted">' + n + ' / 4 완료 · 4명 모두 \'크로스체킹 완료\'를 누르면 완성 정리본이 나타납니다.</p>' +
+    '<div class="progress"><div style="width:' + (n * 25) + '%"></div></div><p class="muted">' + n + ' / 4 완료 · 완료한 업무부터 부장이 검토할 수 있습니다. 4개 업무 최종 확인 후 취합합니다.</p>' +
     '<table class="grid compact"><thead><tr><th>담당</th><th>항목 수</th><th>상태</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>' +
     '<p class="muted small">' + weekLine() + '</p></div>';
 }
 function weekLine() { const p = S.docs.posts || {}; return (p.posts ? p.posts.length + '개 글 · ' : '') + E.fmtMD(p.monday || '') + ' ~ ' + E.fmtMD(p.sunday || ''); }
 // ---------------------------------------------------------------- 3) 완성 정리본
-function finalRows() { return S.docs.final ? S.docs.final.rows : E.GROUPS.flatMap(g => committed(g)).sort((a, b) => (a.order || 0) - (b.order || 0) || Number(a.post) - Number(b.post) || a.seq - b.seq); }
-function viewFinal() {
-  const rows = finalRows();
-  const res = computeFor(rows); const sm = statusMap(res);
-  const cnt = counts(res.rows);
-  return steps(2) + '<div class="panel"><div class="head-row"><h2>완성 정리본</h2><span class="muted">4명 크로스체크 완료 · 원문 이름 순서 · 칸을 눌러 직접 고칠 수 있습니다</span><span class="grow"></span>' +
-    '<button class="primary" data-act="toExtras">완성 정리본 확인 →</button></div>' + summaryChips(cnt) +
-    E.GROUPS.map(g => '<h3 class="sec">' + g + ' <span class="muted small">' + GDESC[g] + '</span></h3>' + rowsTable(rows.filter(r => E.groupOf(r.user) === g), sm, { scope: 'final' })).join('') + '</div>';
+function combinedRows(final,groups) {
+ return E.GROUPS.flatMap((g,i)=>final && (!final.sourceStamps || final.sourceStamps[GKEY[g]]===sourceStamp(groups[i])) ? final.rows.filter(r=>E.groupOf(r.user)===g) : groups[i]?.rows||[]).sort((a,b)=>(a.order||0)-(b.order||0)||Number(a.post)-Number(b.post)||a.seq-b.seq);
 }
+function finalRows() { return combinedRows(S.docs.final,E.GROUPS.map(gdoc)); }
+function currentStamps(groups=E.GROUPS.map(gdoc)){return Object.fromEntries(E.GROUPS.map((g,i)=>[GKEY[g],sourceStamp(groups[i])]));}
+
+function sourceStamp(d) { const text=JSON.stringify([d?.revision || '',d?.doneAt || '',d?.rows || []]); let a=2166136261,b=5381; for(let i=0;i<text.length;i++){a=Math.imul(a^text.charCodeAt(i),16777619);b=Math.imul(b,33)^text.charCodeAt(i);}return (a>>>0).toString(36)+'-'+(b>>>0).toString(36); }
+function chiefApproved() { return allDone() && E.GROUPS.every(g => S.docs.final?.reviewed?.[GKEY[g]] === sourceStamp(gdoc(g))); }
+function viewFinal() {
+  const rows = finalRows(), res=computeFor(rows), sm=statusMap(res);
+  return steps(2) + '<div class="panel"><div class="head-row"><h2>부장 최종 검토</h2><span class="grow"></span>' +
+    '<button class="primary" data-act="toExtras" '+(!chiefApproved() || S.saving ? 'disabled' : '')+'>최종 검토 완료 · 추가 기소로 →</button></div><p class="muted">업무별 검토를 열어 원문과 부원 수정 결과를 확인하고 최종 확인을 눌러 주세요. 부장이 수정하면 확인 상태가 해제됩니다.</p>'+summaryChips(counts(res.rows))+
+    E.GROUPS.filter(g=>gdoc(g)?.done).map(g=>{
+      const approved=S.docs.final?.reviewed?.[GKEY[g]]===sourceStamp(gdoc(g));
+      return '<section class="panel"><div class="head-row"><h3>'+g+'</h3><span class="'+(approved?'ok':'warn')+'">'+(approved?'최종 확인 완료':'부장 확인 대기')+'</span><span class="grow"></span><button class="outline" data-act="reviewOpen" data-g="'+g+'">'+(reviewOpen.has(g)?'검토 닫기':'검토 열기')+'</button></div>'+
+      (reviewOpen.has(g) ? rowsTable(rows.filter(r=>E.groupOf(r.user)===g),sm,{scope:'final'})+'<button class="primary" data-act="reviewApprove" data-g="'+g+'" '+(S.saving?'disabled':'')+'>이 업무 최종 확인</button><button class="ghost" data-act="reopen" data-g="'+g+'">부원에게 다시 열기</button>' : '')+'</section>';
+    }).join('')+'</div>';
+}
+async function approveReview(group) {
+ const shown=JSON.stringify(finalRows()), stamp=sourceStamp(gdoc(group));
+ await save(()=>store.transaction(async tx=>{
+   const final=await tx.get('cur/final');
+   const groups=await Promise.all(E.GROUPS.map(g=>tx.get('cur/g_'+GKEY[g])));
+   const index=E.GROUPS.indexOf(group), current=groups[index];
+   const currentRows=combinedRows(final,groups);
+   if(!current?.done || sourceStamp(current)!==stamp || JSON.stringify(currentRows)!==shown) throw Error('검토 중 자료가 변경되었습니다. 새로고침 후 다시 확인해 주세요.');
+   tx.set('cur/final',{...(final||{}),rows:currentRows,sourceStamps:currentStamps(groups),reviewed:{...(final?.reviewed||{}),[GKEY[group]]:stamp},updatedAt:new Date().toISOString()});
+ }),group+' 최종 확인을 기록했습니다');
+}
+async function goToExtras(phase='extras') {
+ await save(()=>store.transaction(async tx=>{
+   const state=await tx.get('cfg/state'), final=await tx.get('cur/final');
+   const groups=await Promise.all(E.GROUPS.map(g=>tx.get('cur/g_'+GKEY[g])));
+   if(!E.GROUPS.every((g,i)=>groups[i]?.done && final?.reviewed?.[GKEY[g]]===sourceStamp(groups[i]))) throw Error('모든 업무의 부장 최종 확인을 완료해 주세요.');
+   tx.set('cfg/state',{...state,phase});
+ }));
+}
+
 function counts(rows) {
   const c = { ok: 0, dup: 0, withdrawn: 0, wdreq: 0, unassigned: 0, excluded: 0, flag: 0, deleted: 0 };
   for (const r of rows) { if (r.placeholder) continue; c[r.status] = (c[r.status] || 0) + 1; if (r.status === 'ok' && r.flags.length) c.flag++; }
@@ -260,7 +298,7 @@ function viewExtras() {
     const artCls = C.artPoints.has(E.resolveArticle(C, x.art, x.acc)) ? '' : 'f-pts';
     return '<tr data-xid="' + H(x.id) + '"><td><input class="cell ' + nameCls + '" data-xf="name" value="' + H(x.name) + '"></td>' +
       '<td><input class="cell" data-xf="grade" value="' + H(x.grade || '') + '" size="2"></td>' +
-      '<td><input class="cell" data-xf="date" value="' + H(x.date ? E.fmtMD(x.date) : '') + '" placeholder="날짜" size="6"></td>' +
+      '<td><input class="cell" data-xf="date" value="' + H(x.date ? E.fmtDate(x.date) : '') + '" placeholder="날짜" size="6"></td>' +
       '<td><input class="cell" data-xf="acc" value="' + H(x.acc) + '" size="8"></td>' +
       '<td>' + artSelect(x.art, 'data-xf="art"', artCls, x.acc) + '</td>' +
       '<td><input class="cell num" data-xf="pts" value="' + H(x.pts ?? '') + '" size="3" placeholder="자동"></td>' +
@@ -271,8 +309,7 @@ function viewExtras() {
     '<div class="two"><div><h3>부서 엑셀 파일</h3>' + dropZone('dept', '엑셀 파일(.xlsx)을 여기에 끌어다 놓거나 눌러서 고르세요 · 여러 개 가능', true) +
     '<p class="muted small">노란색으로 칠한 줄이 있는 파일(법정 좌석표)은 노란 줄만, 없으면 모든 줄을 가져옵니다.</p>' +
     (files.length ? '<ul class="files">' + files.map((f, i) => '<li><b>' + H(f.name) + '</b> · ' + f.count + '건' + (f.yellowOnly ? ' (노란 줄만)' : '') + ' <button class="icon" data-act="fdel" data-i="' + i + '" title="이 파일 빼기">✕</button></li>').join('') + '</ul>' : '') + '</div>' +
-    '<div><h3>직접 붙여넣기</h3><textarea id="xpaste" class="paste small-ta" placeholder="예) 10/23 외부음식 10점 홍길동 김철수&#10;또는 엑셀 표를 머리글(이름·날짜·기소 항목…)째 복사해 붙여넣기" data-keep="xpaste"></textarea>' +
-    '<div class="row-inline"><label>기소자 <input id="xacc" placeholder="예: 식품영양부" size="10" data-keep="xacc"></label><button class="outline" data-act="xadd">붙여넣은 내용 추가</button></div><p id="xinfo" class="muted small"></p></div></div>' +
+    '<div><h3>직접 입력</h3>' + M.form('v1') + '</div></div>' +
     '<h3>추가될 기소 <span class="muted small">' + live.length + '건 · 칸을 눌러 고칠 수 있습니다 (분홍=명단에 없는 이름, 주황=동명이인, 노랑=벌점표에 없는 항목)</span></h3>' +
     (live.length ? '<div class="tablewrap"><table class="grid"><thead><tr><th>이름</th><th>학년</th><th>날짜</th><th>기소자</th><th>기소 항목</th><th>점수</th><th>출처</th><th></th></tr></thead><tbody>' + tr + '</tbody></table></div>' : '<p class="muted">아직 없습니다. 추가 기소가 없으면 바로 [추가 기소 반영 완료]를 누르세요.</p>') + '</div>';
 }
@@ -417,7 +454,7 @@ function rowsTable(rows, sm, opt) {
 // ================================================================ 고치기 (부원: 내 담당 draft / 부장: final)
 function scopeRows(scope) { return scope === 'final' ? clone(finalRows()) : clone(working(S.group)); }
 function saveScope(scope, rows) {
-  if (scope === 'final') { S.docs.final = { ...(S.docs.final || {}), rows }; return save(() => store.set('cur/final', { rows, updatedAt: new Date().toISOString() })); }
+  if (scope === 'final') { S.docs.final = { ...(S.docs.final || {}), rows, sourceStamps: currentStamps(), reviewed: {} }; return save(() => store.set('cur/final', { rows, sourceStamps: currentStamps(), reviewed: {}, updatedAt: new Date().toISOString() })); }
   const k = 'cur/g_' + GKEY[S.group]; const d = gdoc(S.group);
   S.docs['g_' + GKEY[S.group]] = { ...d, draft: rows };
   const revision = S.editRevision;
@@ -466,10 +503,15 @@ function postAction(scope, pid, act) {
 // ================================================================ 버튼
 app.addEventListener('click', async ev => {
   const b = ev.target.closest('[data-act]'); if (!b || b.tagName === 'INPUT') return;
-  const act = b.dataset.act; const tr = b.closest('tr[data-id]');
+  const act = b.dataset.act;
+  if (act.startsWith('v2')) { await version2.action(act,b); return; }
+  const tr = b.closest('tr[data-id]');
   switch (act) {
-    case 'home': S.view = ''; setRole('', ''); break;
-    case 'role': setRole(b.dataset.role, ''); break;
+    case 'version': chiefVersion=b.dataset.version; S.view=''; render(); break;
+    case 'reviewOpen': reviewOpen.has(b.dataset.g)?reviewOpen.delete(b.dataset.g):reviewOpen.add(b.dataset.g); render(); break;
+    case 'reviewApprove': await approveReview(b.dataset.g); break;
+    case 'home': chiefVersion=''; S.view = ''; setRole('', ''); break;
+    case 'role': chiefVersion=''; setRole(b.dataset.role, ''); break;
     case 'ledger': { const url = new URL('./ledger/', import.meta.url); if (LOCAL) url.searchParams.set('test', ''); window.location.assign(url.href); break; }
     case 'seat-arranger': window.location.assign(new URL('./seats/', import.meta.url).href); break;
     case 'pick': setRole('member', b.dataset.g); break;
@@ -491,9 +533,9 @@ app.addEventListener('click', async ev => {
     case 'reopen': confirmBox(b.dataset.g + ' 다시 열기', '이 담당을 다시 고칠 수 있게 엽니다. 크로스체크 단계로 돌아가며, <b>완성 정리본·법정리스트 화면에서 법무부장이 직접 고친 내용은 지워집니다</b> (추가 기소는 남습니다).', '다시 열기', async () => {
       const g = b.dataset.g; await save(() => store.batch([['cur/g_' + GKEY[g], { done: false, draft: null }, true], ['cur/final', null], ['cfg/state', { phase: 'review' }, true]]));
     }); break;
-    case 'toExtras': await save(async () => { if (!S.docs.final) await store.set('cur/final', { rows: finalRows(), createdAt: new Date().toISOString() }); await store.merge('cfg/state', { phase: 'extras' }); }); break;
+    case 'toExtras': await goToExtras(); break;
     case 'backFinal': await save(() => store.merge('cfg/state', { phase: 'review' })); break;
-    case 'toList': await save(() => store.merge('cfg/state', { phase: 'list' })); window.scrollTo(0, 0); break;
+    case 'toList': await goToExtras('list'); window.scrollTo(0, 0); break;
     case 'backExtras': await save(() => store.merge('cfg/state', { phase: 'extras' })); break;
     case 'xadd': addPasted(); break;
     case 'xdel': { const id = b.closest('tr').dataset.xid; const ex = clone(S.docs.extras); ex.items = ex.items.filter(x => x.id !== id); await save(() => store.set('cur/extras', ex)); break; }
@@ -511,6 +553,7 @@ app.addEventListener('click', async ev => {
 });
 app.addEventListener('change', ev => {
   const t = ev.target;
+  if(t.name==='date' && t.closest('[data-manual]')) { const d=/^202\d\.\d{1,2}\.\d{1,2}$/.test(t.value.trim())?E.toDate(t.value,sundayOf()):''; if(d)t.value=E.fmtDate(d); }
   if (t.dataset.f) { const tr = t.closest('tr[data-id]'); editField(tr.dataset.scope, tr.dataset.id, t.dataset.f, t.value); return; }
   if (t.dataset.xf) { editExtra(t.closest('tr').dataset.xid, t.dataset.xf, t.value); return; }
   if (t.dataset.file) { handleFiles(t.dataset.file, t.files); t.value = ''; return; }
@@ -518,9 +561,12 @@ app.addEventListener('change', ev => {
   if (t.id === 'sunday') { const v = t.value; const el = document.getElementById('weekInfo'); if (el && v) el.textContent = E.fmtMD(E.addDays(v, -6)) + '(월) ~ ' + E.fmtMD(v) + '(일) 에 올라온 글만 씁니다'; }
 });
 app.addEventListener('input', ev => {
+  if(ev.target.dataset.manualQuery) M.updatePicker(ev.target.dataset.manualQuery,ev.target.dataset.manualQuery==='v2'?version2.context():ctx());
+  if(ev.target.id==='v2-search') version2.search(ev.target.value);
   if (ev.target.id === 'paste') { const n = E.parsePasted(ev.target.value).length; const el = document.getElementById('pasteInfo'); if (el) el.textContent = n ? n + '개 글을 읽었습니다' : (ev.target.value.trim() ? '글을 읽지 못했습니다 — 즐겨찾기로 복사한 내용인지 확인하세요' : ''); }
 });
 app.addEventListener('submit', async ev => {
+  if (ev.target.dataset.manual) { ev.preventDefault(); const prefix=ev.target.dataset.manual; if(S.saving)return; try { const item=M.readForm(prefix,prefix==='v2'?version2.context():ctx()); ev.target.querySelector('[name="date"]').value=E.fmtDate(item.date); if(prefix==='v2') await version2.add(item); else await save(async()=>{ const ex=await store.get('cur/extras')||{items:[],files:[]}; ex.items.push({...item,id:uid()}); await store.set('cur/extras',ex); },'기소를 추가했습니다'); } catch(e) { document.getElementById(prefix+'-error').textContent=e.message; } return; }
   if (ev.target.id !== 'login') return; ev.preventDefault();
   const f = new FormData(ev.target); const err = document.getElementById('loginErr');
   localStorage.setItem('cl-email', f.get('email'));
@@ -541,6 +587,7 @@ function afterRender() {}
 // ================================================================ 파일
 async function handleFiles(kind, files) {
   if (!files || !files.length) return;
+  if(kind==='v2') { await version2.upload(files[0]); return; }
   if (kind === 'refs') {
     try {
       const { refs, missing } = await IO.readRefsFile(await files[0].arrayBuffer());
@@ -595,11 +642,13 @@ function downloadBlob(blob, name) {
   setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 2000);
 }
 async function downloadList() {
+  if(!chiefApproved()) { toast('부장 최종 확인을 완료한 뒤 다운로드해 주세요.'); return; }
   const res = listResult();
   const blob = await IO.writeCourtList(res.list, { listNo: st().listNo, sunday: st().sunday, header: S.docs.refs.header });
   downloadBlob(blob, IO.courtListFileName(st().listNo, st().sunday));
 }
 function printList() {
+  if(!chiefApproved()) { toast('부장 최종 확인을 완료한 뒤 저장해 주세요.'); return; }
   const was = S.showColors; S.showColors = false; render();
   const title = document.title; document.title = IO.courtListFileName(st().listNo, st().sunday).replace(/\.xlsx$/, '');
   document.body.classList.add('printing');
@@ -621,4 +670,5 @@ async function saveSettings() {
   await save(async () => { await store.set('cfg/state', s); await store.merge('cfg/refs', { header }); }, '저장했습니다');
 }
 
+version2=createVersion2({refs:()=>S.docs.refs||{},sunday:sundayOf,render,toast,downloadBlob,dropZone,uid,confirmBox});
 boot();

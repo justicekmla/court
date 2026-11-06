@@ -161,3 +161,18 @@ table.court-t tr.th td { font-size: 12.5px; }
   body.printing table.court-t td.notice { font-size: 9.5px; }
   body.printing table.court-t tr { break-inside: avoid; }
 }
+
+/* 부장 버전 선택 · 개별 기소 · 파일 편집 */
+.manual-form { display:grid; gap:12px; margin-top:16px; }
+.manual-form label { display:grid; gap:4px; }
+.manual-form input, .manual-form select { width:100%; min-width:0; }
+.manual-form select { white-space:normal; }
+.v2-split { align-items:start; }
+.v2-split > .panel { margin:0; min-width:0; }
+.v2-results { max-height:660px; overflow:auto; }
+.v2-person { border:1px solid var(--line); border-radius:8px; padding:12px; margin:12px 0; }
+.v2-charge { display:flex; gap:12px; align-items:center; justify-content:space-between; border-top:1px solid var(--line2); padding:10px 0; }
+.v2-charge span { overflow-wrap:anywhere; }
+.v2-charge button { flex-shrink:0; }
+.v2-charge.st-del { opacity:.6; }
+@media(max-width:760px) { .v2-split { grid-template-columns:1fr; } }
