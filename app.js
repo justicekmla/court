@@ -1,3 +1,4 @@
+import { sourceStamp, rowsForGroup, combinedRows, currentStamps as stampsForGroups, reviewSnapshotMatches } from './review.js?v=20261107-1';
 import * as E from './engine.js?v=20261107';
 import * as M from './manual.js?v=20261107';
 import { createVersion2 } from './version2.js?v=20261107';
@@ -34,7 +35,12 @@ async function save(fn, okMsg) {
   catch (e) { console.error(e); toast('저장하지 못했습니다: ' + store.errorText(e), 6000); }
   finally { S.saving--; renderSaving(); }
 }
-function renderSaving() { const el = document.getElementById('saving'); if (el) el.textContent = S.saving ? '저장 중…' : '저장됨'; }
+function renderSaving() {
+  const el = document.getElementById('saving');
+  if (el) el.textContent = S.saving ? '저장 중…' : '저장됨';
+  for (const button of app.querySelectorAll('[data-act="reviewApprove"], [data-act="organize"]')) button.disabled = S.saving > 0;
+  for (const button of app.querySelectorAll('[data-act="toExtras"]')) button.disabled = S.saving > 0 || !chiefApproved();
+}
 
 // ================================================================ 데이터 꺼내기
 const st = () => S.docs.state || {};
@@ -237,13 +243,9 @@ function viewWaiting() {
 }
 function weekLine() { const p = S.docs.posts || {}; return (p.posts ? p.posts.length + '개 글 · ' : '') + E.fmtMD(p.monday || '') + ' ~ ' + E.fmtMD(p.sunday || ''); }
 // ---------------------------------------------------------------- 3) 완성 정리본
-function combinedRows(final,groups) {
- return E.GROUPS.flatMap((g,i)=>final && (!final.sourceStamps || final.sourceStamps[GKEY[g]]===sourceStamp(groups[i])) ? final.rows.filter(r=>E.groupOf(r.user)===g) : groups[i]?.rows||[]).sort((a,b)=>(a.order||0)-(b.order||0)||Number(a.post)-Number(b.post)||a.seq-b.seq);
-}
 function finalRows() { return combinedRows(S.docs.final,E.GROUPS.map(gdoc)); }
-function currentStamps(groups=E.GROUPS.map(gdoc)){return Object.fromEntries(E.GROUPS.map((g,i)=>[GKEY[g],sourceStamp(groups[i])]));}
+function currentStamps(groups=E.GROUPS.map(gdoc)){return stampsForGroups(groups);}
 
-function sourceStamp(d) { const text=JSON.stringify([d?.revision || '',d?.doneAt || '',d?.rows || []]); let a=2166136261,b=5381; for(let i=0;i<text.length;i++){a=Math.imul(a^text.charCodeAt(i),16777619);b=Math.imul(b,33)^text.charCodeAt(i);}return (a>>>0).toString(36)+'-'+(b>>>0).toString(36); }
 function chiefApproved() { return allDone() && E.GROUPS.every(g => S.docs.final?.reviewed?.[GKEY[g]] === sourceStamp(gdoc(g))); }
 function viewFinal() {
   const rows = finalRows(), res=computeFor(rows), sm=statusMap(res);
@@ -256,13 +258,12 @@ function viewFinal() {
     }).join('')+'</div>';
 }
 async function approveReview(group) {
- const shown=JSON.stringify(finalRows()), stamp=sourceStamp(gdoc(group));
+ const shown=rowsForGroup(clone(finalRows()),group), stamp=sourceStamp(gdoc(group));
  await save(()=>store.transaction(async tx=>{
    const final=await tx.get('cur/final');
    const groups=await Promise.all(E.GROUPS.map(g=>tx.get('cur/g_'+GKEY[g])));
-   const index=E.GROUPS.indexOf(group), current=groups[index];
    const currentRows=combinedRows(final,groups);
-   if(!current?.done || sourceStamp(current)!==stamp || JSON.stringify(currentRows)!==shown) throw Error('검토 중 자료가 변경되었습니다. 새로고침 후 다시 확인해 주세요.');
+   if(!reviewSnapshotMatches(group,shown,stamp,final,groups)) throw Error('검토 중 자료가 변경되었습니다. 새로고침 후 다시 확인해 주세요.');
    tx.set('cur/final',{...(final||{}),rows:currentRows,sourceStamps:currentStamps(groups),reviewed:{...(final?.reviewed||{}),[GKEY[group]]:stamp},updatedAt:new Date().toISOString()});
  }),group+' 최종 확인을 기록했습니다');
 }
