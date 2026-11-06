@@ -1,8 +1,11 @@
+import * as CM from './court-meta.js?v=semester-20261107-1';
+import * as Roster from './roster.js?v=semester-20261107-1';
+import {verifyChiefPassword,parseChiefSetup,validChiefVerifier} from './chief-auth.js?v=semester-20261107-1';
 import { sourceStamp, rowsForGroup, combinedRows, currentStamps as stampsForGroups, reviewSnapshotMatches } from './review.js?v=20261107-1';
 import * as E from './engine.js?v=20261107';
 import * as M from './manual.js?v=20261107';
-import { createVersion2 } from './version2.js?v=20261107';
-import * as IO from './io.js?v=20261107';
+import { createVersion2 } from './version2.js?v=semester-20261107-1';
+import * as IO from './io.js?v=semester-20261107-1';
 import { firebaseStore, localStore } from './store.js?v=uploads-20261101-1';
 
 // ================================================================ 공통
@@ -21,24 +24,27 @@ let store = null;
 let version2;
 let chiefVersion = '';
 let reviewOpen = new Set();
+let pendingChiefSetup=parseChiefSetup(location.hash);
+if(pendingChiefSetup)history.replaceState(null,'',location.pathname+location.search);
 const S = {
-  user: null, role: sessionStorage.getItem('cl-role') || '', group: sessionStorage.getItem('cl-group') || '',
+  chiefUnlocked: false, metaResetKeep: false, rosterDraft: null, user: null, role: sessionStorage.getItem('cl-role') || '', group: sessionStorage.getItem('cl-group') || '',
   docs: { refs: undefined, state: undefined, posts: undefined, g_m: undefined, g_f: undefined, g_i: undefined, g_a: undefined, final: undefined, extras: undefined },
   view: '', modal: null, toast: '', saving: 0, showColors: true, unsub: [], pendingRender: false, openPosts: new Set()
 };
-function setRole(r, g) { S.role = r || ''; S.group = g || ''; sessionStorage.setItem('cl-role', S.role); sessionStorage.setItem('cl-group', S.group); render(); }
+function setRole(r, g) { S.chiefUnlocked=false; S.view=''; chiefVersion=''; S.role = r || ''; S.group = g || ''; sessionStorage.setItem('cl-role', S.role); sessionStorage.setItem('cl-group', S.group); render(); }
 function toast(msg, ms = 2600) { S.toast = msg; renderToast(); clearTimeout(toast.t); toast.t = setTimeout(() => { S.toast = ''; renderToast(); }, ms); }
 function renderToast() { let t = document.getElementById('toast'); if (!t) { t = document.createElement('div'); t.id = 'toast'; document.body.appendChild(t); } t.textContent = S.toast; t.className = S.toast ? 'show' : ''; }
 async function save(fn, okMsg) {
   S.saving++; renderSaving();
-  try { await fn(); if (okMsg) toast(okMsg); }
-  catch (e) { console.error(e); toast('저장하지 못했습니다: ' + store.errorText(e), 6000); }
+  try { await fn(); if (okMsg) toast(okMsg); return true; }
+  catch (e) { console.error(e); toast('저장하지 못했습니다: ' + store.errorText(e), 6000); return false; }
   finally { S.saving--; renderSaving(); }
 }
 function renderSaving() {
   const el = document.getElementById('saving');
   if (el) el.textContent = S.saving ? '저장 중…' : '저장됨';
   for (const button of app.querySelectorAll('[data-act="reviewApprove"], [data-act="organize"]')) button.disabled = S.saving > 0;
+  for(const button of app.querySelectorAll('#court-meta-form button[type="submit"], [data-act="rosterApply"]'))button.disabled=S.saving>0;
   for (const button of app.querySelectorAll('[data-act="toExtras"]')) button.disabled = S.saving > 0 || !chiefApproved();
 }
 
@@ -81,7 +87,7 @@ async function boot() {
       const paths = { refs: 'cfg/refs', state: 'cfg/state', posts: 'cur/posts', g_m: 'cur/g_m', g_f: 'cur/g_f', g_i: 'cur/g_i', g_a: 'cur/g_a', final: 'cur/final', extras: 'cur/extras' };
       for (const [k, p] of Object.entries(paths)) {
         S.docs[k] = undefined;
-        S.unsub.push(store.watch(p, v => { S.docs[k] = v; scheduleRender(); }, e => toast('불러오지 못했습니다: ' + store.errorText(e), 8000)));
+        S.unsub.push(store.watch(p, v => { if(k==='state' && JSON.stringify(S.docs.state?.courtMeta)!==JSON.stringify(v?.courtMeta))version2?.metadataChanged(); S.docs[k] = v; scheduleRender(); }, e => toast('불러오지 못했습니다: ' + store.errorText(e), 8000)));
       }
     }
     render();
@@ -112,11 +118,11 @@ function render() {
   else if (S.role === 'chief') body = viewChief();
   else body = viewMember();
   app.innerHTML = topbar() + '<main id="main">' + body + '</main>' + (S.modal ? '<div class="modal-bg"><div class="modal">' + S.modal + '</div></div>' : '');
-  for (const el of app.querySelectorAll('[data-keep]')) if (el.dataset.keep in keep && !S.resetKeep) { if (el.type === 'checkbox') el.checked = keep[el.dataset.keep]; else el.value = keep[el.dataset.keep]; }
+  for (const el of app.querySelectorAll('[data-keep]')) if (el.dataset.keep in keep && !S.resetKeep && !(S.metaResetKeep && el.dataset.keep.startsWith('meta-'))) { if (el.type === 'checkbox') el.checked = keep[el.dataset.keep]; else el.value = keep[el.dataset.keep]; }
   for (const key of openUploads) { const el = app.querySelector('details[data-upload="' + key + '"]'); if (el) el.open = true; }
   for (const prefix of ['v1','v2']) M.updatePicker(prefix, prefix==='v2' && version2 ? version2.context() : ctx(), true);
   for(const prefix of ['v1','v2']) { const el=document.getElementById(prefix+'-person'); if(el && keep[prefix+'-person'] && !S.resetKeep) el.value=keep[prefix+'-person']; }
-  S.resetKeep = false;
+  S.resetKeep = false; S.metaResetKeep=false;
   window.scrollTo(0, y);
 }
 function topbar() {
@@ -126,7 +132,7 @@ function topbar() {
     (st().listNo ? '<span class="pill">Court List ' + H(st().listNo) + '</span>' : '') +
     (role ? '<span class="pill role">' + H(role) + '</span>' : '') +
     '<span class="grow"></span>' + (S.role ? '<span id="saving" class="muted small">' + (S.saving ? '저장 중…' : '') + '</span>' : '') +
-    (S.role === 'chief' ? '<button class="ghost small" data-act="settings">설정</button>' : '') +
+    (S.role === 'chief' && S.chiefUnlocked ? '<button class="ghost small" data-act="settings">설정</button>' : '') +
     '<button class="ghost small" data-act="home">처음 화면</button></header>';
 }
 
@@ -150,9 +156,52 @@ function phaseText() { return { review: '크로스체크 단계', extras: '추�
 
 // ================================================================ 법무부장
 function viewChief() {
+  if(!validChiefVerifier(st().chiefPasswordVerifier))return '<div class="panel narrow"><h2>법무부장용 비밀번호 최초 설정</h2>'+(pendingChiefSetup?'<p>전달된 설정을 등록한 뒤 지정한 비밀번호로 입장합니다.</p><button class="primary" data-act="initializeChiefPassword">전용 비밀번호 설정 적용</button>':'<p>비공개 비밀번호 설정 링크로 이 사이트를 열어 주세요. 최초 한 번만 등록하면 됩니다.</p>')+'</div>';
+  if(!S.chiefUnlocked) return '<div class="center-box login"><h2>법무부장 비밀번호 확인</h2><p class="muted">법무부장 화면에 들어갈 때마다 전용 비밀번호를 입력해 주세요.</p><form id="chief-unlock"><label>법무부장용 비밀번호<input name="chiefPassword" type="password" autocomplete="off" required></label><button class="primary" type="submit">확인하고 들어가기</button><p class="err" id="chief-password-error" role="alert"></p></form></div>';
+  if(S.view==='roster')return viewRoster();
   if (S.view === 'settings') return viewSettings();
   if (!chiefVersion) return '<div class="center-box home"><h1>법무부장용</h1><div class="home-btns"><button class="primary huge" data-act="version" data-version="1">버전1</button><button class="outline huge" data-act="version" data-version="2">버전2</button></div><p class="muted">버전1: 업무별 크로스체크 · 버전2: 법정리스트 파일 추가·삭제</p></div>';
-  if (chiefVersion === '2') return version2.view();
+  if (chiefVersion === '2') return courtMetadataPanel()+version2.view();
+  return courtMetadataPanel()+viewChiefVersion1();
+}
+async function initializeChiefPassword(){
+ if(!validChiefVerifier(pendingChiefSetup)||S.saving)return;
+ let saved;const ok=await save(()=>store.transaction(async tx=>{
+  const latest=await tx.get('cfg/state')||{};
+  if(latest.chiefPasswordVerifier)throw Error('이미 비밀번호가 등록되어 있습니다. 기존 비밀번호로 입장해 주세요.');
+  saved={...latest,chiefPasswordVerifier:pendingChiefSetup};tx.set('cfg/state',saved);
+ }),'법무부장용 비밀번호를 등록했습니다');
+ if(ok){pendingChiefSetup=null;S.docs.state=saved;S.chiefUnlocked=false;render();}
+}
+function outputInfo(requireDate=false){return CM.outputMetadata(S.docs.refs||{},st(),sundayOf(),{requireDate});}
+function courtMetadataPanel(){return CM.metadataPanel(CM.readMetadata(S.docs.refs||{},st(),sundayOf()),{version:chiefVersion,rosterCount:S.docs.refs?.roster?.length||0,saving:S.saving>0});}
+function updateMetadataPreview(){const form=document.getElementById('court-meta-form');if(!form)return;const m=Object.fromEntries(new FormData(form));const pre=document.getElementById('meta-notice');if(pre)pre.textContent=(m.courtDate?CM.dateLabel(m.courtDate)+'\n':'')+CM.buildNotice(m);}
+async function saveCourtMetadata(patch,reset=false){
+ if(!S.chiefUnlocked)return;
+ let clean;try{clean=Object.fromEntries(Object.entries(patch).map(([k,v])=>[k,CM.validateMetadataField(k,v)]));}catch(e){const el=document.getElementById('meta-error');if(el)el.textContent=e.message;return;}
+ let saved;
+ const ok=await save(()=>store.transaction(async tx=>{
+  const latest=await tx.get('cfg/state')||{};
+  const prior=CM.readMetadata(S.docs.refs||{},latest,sundayOf());delete prior.listNo;
+  const {listNo,...fields}=clean;
+  saved={...latest,courtMeta:{...(reset?CM.emptyMetadata():prior),...fields}};
+  if(listNo!==undefined)saved.listNo=listNo;
+  tx.set('cfg/state',saved);
+ }),reset?'학기 입력 정보를 초기화했습니다':null);
+ if(ok){S.docs.state=saved;S.metaResetKeep=reset;version2.metadataChanged();scheduleRender();}
+}
+function viewRoster(){
+ const draft=S.rosterDraft;
+ return '<section class="panel"><div class="head-row"><h2>재학생 리스트 교체</h2><span class="grow"></span><button class="ghost" data-act="rosterCancel">돌아가기</button></div><p class="muted">이름과 학년 또는 기수를 넣어 주세요. 같은 이름의 다른 기수는 자동으로 구분합니다. 새 명단을 저장하기 전까지 기존 명단이 유지됩니다.</p>'+dropZone('roster','재학생 명단 엑셀 또는 텍스트 파일 선택')+'<h3>텍스트 붙여넣기</h3><textarea id="roster-text" class="paste small-ta" data-keep="roster-text" placeholder="이름    학년\n박민서29    3\n박민서31    1"></textarea><button class="outline" data-act="rosterParse">명단 읽기·미리보기</button>'+
+ (draft?'<h3>새 명단 '+draft.roster.length+'명'+(draft.duplicates?' · 같은 행 '+draft.duplicates+'건 중복 제외':'')+'</h3><div class="tablewrap roster-preview"><table class="grid"><thead><tr><th>이름</th><th>학년</th><th>학번</th></tr></thead><tbody>'+draft.roster.map(r=>'<tr><td>'+H(r.name)+'</td><td>'+r.grade+'</td><td>'+H(r.no)+'</td></tr>').join('')+'</tbody></table></div><button class="primary" data-act="rosterApply">이 명단으로 재학생 리스트 저장</button>':'')+'</section>';
+}
+function parseRosterDraft(){try{S.rosterDraft=Roster.parseRosterText(document.getElementById('roster-text').value,sundayOf());render();}catch(e){toast(e.message,8000);}}
+async function applyRosterDraft(){
+ if(!S.rosterDraft||S.saving)return;const roster=clone(S.rosterDraft.roster);
+ const ok=await save(()=>store.transaction(async tx=>{const refs=await tx.get('cfg/refs')||{};tx.set('cfg/refs',{...refs,roster,updatedAt:new Date().toISOString()});}),'재학생 '+roster.length+'명 명단을 저장했습니다');
+ if(ok){S.view='';S.rosterDraft=null;render();}
+}
+function viewChiefVersion1() {
   if (!refsReady()) return viewNeedRefs();
   const ph = st().phase || 'idle';
   if (ph === 'idle') return viewPaste();
@@ -171,7 +220,7 @@ function viewNeedRefs() {
     dropZone('refs', '기준자료.xlsx를 여기에 끌어다 놓거나 눌러서 고르세요') + '</div>';
 }
 function dropZone(kind, label, multiple) {
-  return '<label class="drop" data-drop="' + kind + '"><input type="file" accept=".xlsx,.xlsm" ' + (multiple ? 'multiple ' : '') + 'data-file="' + kind + '" hidden><span>' + H(label) + '</span></label>';
+  return '<label class="drop" data-drop="' + kind + '"><input type="file" accept="' + (kind==='roster'?'.xlsx,.xlsm,.txt,.csv':'.xlsx,.xlsm') + '" ' + (multiple ? 'multiple ' : '') + 'data-file="' + kind + '" hidden><span>' + H(label) + '</span></label>';
 }
 // ---------------------------------------------------------------- 1) 붙여넣기
 function viewPaste() {
@@ -318,7 +367,7 @@ function viewExtras() {
 function listResult() { const rows = finalRows().concat(extrasRows()); return computeFor(rows); }
 function viewList() {
   const res = listResult(); const list = res.list;
-  const refs = S.docs.refs; const h = refs.header || { labels: [], names: [], notice: '' };
+  const info=outputInfo(); const h=info.header;
   const sun = st().sunday; const no = st().listNo;
   const issues = issueList(res);
   let body = ''; let i = 0;
@@ -337,9 +386,9 @@ function viewList() {
   const sheet = '<div class="court" id="court"><table class="court-t"><colgroup><col style="width:4%"><col style="width:6.7%"><col style="width:10.3%"><col style="width:9.7%"><col style="width:10.7%"><col style="width:38%"><col style="width:10.2%"><col style="width:10.3%"></colgroup>' +
     '<tr class="tr-title"><td colspan="6" rowspan="3" class="title">Court List ' + H(no) + ' 법무부용</td><td class="hb">' + H(h.labels[0]) + '</td><td class="hb">' + H(h.names[0]) + '</td></tr>' +
     '<tr class="tr-title"><td class="hb">' + H(h.labels[1]) + '</td><td class="hb">' + H(h.names[1]) + '</td></tr><tr class="tr-title"><td class="hb">' + H(h.labels[2]) + '</td><td class="hb">' + H(h.names[2]) + '</td></tr>' +
-    '<tr><td colspan="8" class="notice">' + H(IO.wednesdayLabel(sun) + '\n' + h.notice) + '</td></tr>' +
+    '<tr><td colspan="8" class="notice">' + H(CM.dateLabel(info.courtDate) + '\n' + h.notice) + '</td></tr>' +
     '<tr class="th"><td>No</td><td>Grade</td><td>Name</td><td>Date</td><td>Accused by</td><td>Violated Article</td><td>Points</td><td>Sum</td></tr>' + body + '</table></div>';
-  return steps(4) + '<div class="panel"><div class="head-row"><h2>Court List ' + H(no) + ' 법무부용</h2><span class="muted">' + list.length + '건 · ' + E.fmtMD(E.addDays(sun, -6)) + '~' + E.fmtMD(sun) + ' · 날짜 ' + IO.wednesdayLabel(sun) + '</span><span class="grow"></span>' +
+  return steps(4) + '<div class="panel"><div class="head-row"><h2>Court List ' + H(no) + ' 법무부용</h2><span class="muted">' + list.length + '건 · ' + E.fmtMD(E.addDays(sun, -6)) + '~' + E.fmtMD(sun) + ' · 날짜 ' + CM.dateLabel(info.courtDate) + '</span><span class="grow"></span>' +
     '<button class="ghost" data-act="backExtras">← 추가 기소</button><button class="primary" data-act="dlx">엑셀 다운로드</button><button class="outline" data-act="pdf">PDF 저장</button></div>' +
     '<div class="head-row"><label class="small"><input type="checkbox" data-act="colors" ' + (S.showColors ? 'checked' : '') + '> 확인할 칸 색 표시 (다운로드 파일에는 색이 없습니다)</label><span class="grow"></span><button class="danger ghost small" data-act="newWeek">새로 시작 (다음 주)</button></div>' +
     (issues.length ? '<details class="issues" open><summary>확인 필요 ' + issues.length + '건</summary><div class="tablewrap"><table class="grid compact"><thead><tr><th>이름</th><th>날짜</th><th>항목</th><th>칸</th><th>사유</th><th>출처</th></tr></thead><tbody>' +
@@ -505,6 +554,7 @@ function postAction(scope, pid, act) {
 app.addEventListener('click', async ev => {
   const b = ev.target.closest('[data-act]'); if (!b || b.tagName === 'INPUT') return;
   const act = b.dataset.act;
+  if(S.role==='chief' && !S.chiefUnlocked && !['home','role','logout','initializeChiefPassword'].includes(act))return;
   if (act.startsWith('v2')) { await version2.action(act,b); return; }
   const tr = b.closest('tr[data-id]');
   switch (act) {
@@ -516,6 +566,12 @@ app.addEventListener('click', async ev => {
     case 'ledger': { const url = new URL('./ledger/', import.meta.url); if (LOCAL) url.searchParams.set('test', ''); window.location.assign(url.href); break; }
     case 'seat-arranger': window.location.assign(new URL('./seats/', import.meta.url).href); break;
     case 'pick': setRole('member', b.dataset.g); break;
+    case 'rosterStart': confirmBox('정말 초기화하시겠습니까?', '새 명단을 확인하고 저장하면 재학생 리스트가 교체됩니다.', '계속', ()=>{S.view='roster';S.rosterDraft=null;render();}); break;
+    case 'rosterCancel': S.view='';S.rosterDraft=null;render();break;
+    case 'rosterParse': parseRosterDraft();break;
+    case 'rosterApply': await applyRosterDraft();break;
+    case 'resetCourtMeta': confirmBox('학기 입력 정보를 초기화할까요?', '법정 회차·날짜·담당자·안내문 연락처를 비웁니다. 재학생 명단과 기소 자료는 유지됩니다.', '입력 정보 초기화',()=>saveCourtMetadata({listNo:1,...CM.emptyMetadata()},true));break;
+    case 'initializeChiefPassword': await initializeChiefPassword(); break;
     case 'settings': S.view = 'settings'; render(); break;
     case 'closeSettings': S.view = ''; render(); break;
     case 'organize': await doOrganize(b.dataset.g); break;
@@ -554,6 +610,7 @@ app.addEventListener('click', async ev => {
 });
 app.addEventListener('change', ev => {
   const t = ev.target;
+  if(t.closest('#court-meta-form')) { saveCourtMetadata({[t.name]:t.value}); return; }
   if(t.name==='date' && t.closest('[data-manual]')) { const d=/^202\d\.\d{1,2}\.\d{1,2}$/.test(t.value.trim())?E.toDate(t.value,sundayOf()):''; if(d)t.value=E.fmtDate(d); }
   if (t.dataset.f) { const tr = t.closest('tr[data-id]'); editField(tr.dataset.scope, tr.dataset.id, t.dataset.f, t.value); return; }
   if (t.dataset.xf) { editExtra(t.closest('tr').dataset.xid, t.dataset.xf, t.value); return; }
@@ -562,11 +619,20 @@ app.addEventListener('change', ev => {
   if (t.id === 'sunday') { const v = t.value; const el = document.getElementById('weekInfo'); if (el && v) el.textContent = E.fmtMD(E.addDays(v, -6)) + '(월) ~ ' + E.fmtMD(v) + '(일) 에 올라온 글만 씁니다'; }
 });
 app.addEventListener('input', ev => {
+  if(ev.target.closest('#court-meta-form'))updateMetadataPreview();
   if(ev.target.dataset.manualQuery) M.updatePicker(ev.target.dataset.manualQuery,ev.target.dataset.manualQuery==='v2'?version2.context():ctx());
   if(ev.target.id==='v2-search') version2.search(ev.target.value);
   if (ev.target.id === 'paste') { const n = E.parsePasted(ev.target.value).length; const el = document.getElementById('pasteInfo'); if (el) el.textContent = n ? n + '개 글을 읽었습니다' : (ev.target.value.trim() ? '글을 읽지 못했습니다 — 즐겨찾기로 복사한 내용인지 확인하세요' : ''); }
 });
 app.addEventListener('submit', async ev => {
+  if(ev.target.id==='chief-unlock') {
+    ev.preventDefault();const input=ev.target.elements.chiefPassword,button=ev.target.querySelector('button'),error=document.getElementById('chief-password-error');
+    button.disabled=true;error.textContent='확인 중…';const password=input.value;input.value='';
+    try {if(!await verifyChiefPassword(password,st().chiefPasswordVerifier))throw Error('법무부장용 비밀번호가 맞지 않습니다.');S.chiefUnlocked=true;S.view='';chiefVersion='';render();}catch(e){error.textContent=e.message;button.disabled=false;}return;
+  }
+  if(S.role==='chief'&&!S.chiefUnlocked){ev.preventDefault();return;}
+  if(ev.target.id==='court-meta-form'){ev.preventDefault();await saveCourtMetadata(Object.fromEntries(new FormData(ev.target)));return;}
+
   if (ev.target.dataset.manual) { ev.preventDefault(); const prefix=ev.target.dataset.manual; if(S.saving)return; try { const item=M.readForm(prefix,prefix==='v2'?version2.context():ctx()); ev.target.querySelector('[name="date"]').value=E.fmtDate(item.date); if(prefix==='v2') await version2.add(item); else await save(async()=>{ const ex=await store.get('cur/extras')||{items:[],files:[]}; ex.items.push({...item,id:uid()}); await store.set('cur/extras',ex); },'기소를 추가했습니다'); } catch(e) { document.getElementById(prefix+'-error').textContent=e.message; } return; }
   if (ev.target.id !== 'login') return; ev.preventDefault();
   const f = new FormData(ev.target); const err = document.getElementById('loginErr');
@@ -587,7 +653,8 @@ function afterRender() {}
 
 // ================================================================ 파일
 async function handleFiles(kind, files) {
-  if (!files || !files.length) return;
+  if (!files || !files.length || (S.role==='chief'&&!S.chiefUnlocked)) return;
+  if(kind==='roster'){try {const f=files[0];S.rosterDraft=/\.(txt|csv)$/i.test(f.name)?Roster.parseRosterText(await f.text(),sundayOf()):await Roster.readRosterFile(await f.arrayBuffer(),sundayOf());render();}catch(e){toast(e.message,8000);}return;}
   if(kind==='v2') { await version2.upload(files[0]); return; }
   if (kind === 'refs') {
     try {
@@ -644,11 +711,15 @@ function downloadBlob(blob, name) {
 }
 async function downloadList() {
   if(!chiefApproved()) { toast('부장 최종 확인을 완료한 뒤 다운로드해 주세요.'); return; }
+  if(S.saving){toast('입력 내용 저장이 끝난 뒤 다시 눌러 주세요.');return;}
   const res = listResult();
-  const blob = await IO.writeCourtList(res.list, { listNo: st().listNo, sunday: st().sunday, header: S.docs.refs.header });
+  let info;try{info=outputInfo(true);}catch(e){toast(e.message);return;}
+  const blob = await IO.writeCourtList(res.list, info);
   downloadBlob(blob, IO.courtListFileName(st().listNo, st().sunday));
 }
 function printList() {
+  if(S.saving){toast('입력 내용 저장이 끝난 뒤 다시 눌러 주세요.');return;}
+  try{outputInfo(true);}catch(e){toast(e.message);return;}
   if(!chiefApproved()) { toast('부장 최종 확인을 완료한 뒤 저장해 주세요.'); return; }
   const was = S.showColors; S.showColors = false; render();
   const title = document.title; document.title = IO.courtListFileName(st().listNo, st().sunday).replace(/\.xlsx$/, '');
@@ -671,5 +742,5 @@ async function saveSettings() {
   await save(async () => { await store.set('cfg/state', s); await store.merge('cfg/refs', { header }); }, '저장했습니다');
 }
 
-version2=createVersion2({refs:()=>S.docs.refs||{},sunday:sundayOf,render,toast,downloadBlob,dropZone,uid,confirmBox});
+version2=createVersion2({outputInfo:()=>st().courtMeta?outputInfo(true):null,isSaving:()=>S.saving>0,refs:()=>S.docs.refs||{},sunday:sundayOf,render,toast,downloadBlob,dropZone,uid,confirmBox});
 boot();

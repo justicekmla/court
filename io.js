@@ -132,7 +132,7 @@ export async function writeRefsFile(refs) {
 
 // ---------------------------------------------------------------- Court List (배포용: 리스트 시트 하나)
 export function wednesdayLabel(sunday) { const w = E.addDays(sunday, 3); const p = E.parts(w); return p.m + '/' + p.d + '/' + p.y; }
-export async function writeCourtList(list, { listNo, sunday, header }) {
+export async function writeCourtList(list, { listNo, sunday, header, courtDate }) {
   const h = header || { labels: ['', '', ''], names: ['', '', ''], notice: '' };
   const thin = true, F = sz => ({ name: '맑은 고딕', sz });
   const title = { font: { ...F(36), b: true }, h: 'center', v: 'center', wrap: true, border: thin };
@@ -146,7 +146,7 @@ export async function writeCourtList(list, { listNo, sunday, header }) {
     const row = []; for (let c = 0; c < 6; c++) row.push({ v: r === 0 && c === 0 ? 'Court List ' + listNo + ' 법무부용' : '', s: title });
     row.push({ v: h.labels[r] || '', s: box }, { v: h.names[r] || '', s: box }); rows.push(row);
   }
-  const r4 = [{ v: wednesdayLabel(sunday) + '\n' + (h.notice || ''), s: notice }]; for (let c = 1; c < 8; c++) r4.push({ v: '', s: notice }); rows.push(r4);
+  const r4 = [{ v: (courtDate ? (()=>{const p=E.parts(courtDate);return p.m+'/'+p.d+'/'+p.y;})() : wednesdayLabel(sunday)) + '\n' + (h.notice || ''), s: notice }]; for (let c = 1; c < 8; c++) r4.push({ v: '', s: notice }); rows.push(r4);
   rows.push(['No', 'Grade', 'Name', 'Date', 'Accused by', 'Violated Article', 'Points', 'Sum'].map(v => ({ v, s: head })));
   const merges = ['A1:F3', 'A4:H4'];
   const first = 6;

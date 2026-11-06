@@ -176,3 +176,13 @@ table.court-t tr.th td { font-size: 12.5px; }
 .v2-charge button { flex-shrink:0; }
 .v2-charge.st-del { opacity:.6; }
 @media(max-width:760px) { .v2-split { grid-template-columns:1fr; } }
+
+.court-meta { margin-bottom:20px; }
+.meta-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; margin:16px 0; }
+.meta-grid label { display:grid; gap:5px; }
+.meta-grid input { width:100%; min-width:0; padding:8px 10px; border:1px solid var(--line); border-radius:6px; }
+#meta-notice { white-space:pre-wrap; overflow-wrap:anywhere; }
+.roster-preview { max-height:480px; margin-bottom:16px; }
+@media(max-width:760px){ .meta-grid {grid-template-columns:1fr 1fr;} }
+@media(max-width:480px){ .meta-grid {grid-template-columns:1fr;} }
+@media print { .court-meta {display:none !important;} }
