@@ -1,6 +1,6 @@
 import * as E from './engine.js?v=20261107';
 import * as M from './manual.js?v=20261107';
-import {readCourtFile,writeEditedCourt} from './courtfile.js?v=20261107';
+import {readCourtFile,writeEditedCourt} from './courtfile.js?v=semester-20261107-1';
 const H=M.H;
 // Keep the uploaded workbook and edits together across refreshes in this browser.
 const openDB=()=>new Promise((resolve,reject)=>{const r=indexedDB.open('court-chief-v2',1);r.onupgradeneeded=()=>r.result.createObjectStore('work');r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);});
@@ -18,7 +18,7 @@ export function createVersion2(api){
   const groups=new Map();for(const r of matches){const key=r.name+'|'+r.grade;if(!groups.has(key))groups.set(key,[]);groups.get(key).push(r);}
   return groups.size?[...groups.values()].map(items=>`<section class="v2-person"><b>${H(M.personLabel(C,items[0].name,items[0].grade))}</b>${items.map(r=>`<div class="v2-charge ${r.deleted?'st-del':''}"><span>${H(E.fmtDate(r.date))} · ${H(r.art)}<br><small>${H(r.accuser)} · ${r.finalPts}점${r.added?' · 직접 추가':''}${r.deleted?' · 삭제됨':''}</small></span><button class="${r.deleted?'ghost':'danger ghost'} small" data-act="${r.deleted?'v2restore':'v2delete'}" data-id="${H(r.id)}">${r.deleted?'되살리기':'삭제'}</button></div>`).join('')}</section>`).join(''):'<p class="muted">검색 결과가 없습니다.</p>';
  }
- function previewHTML(){return `<div class="tablewrap"><table class="grid"><thead><tr>${['학년','피기소자','날짜','기소자','기소항목','벌점'].map(x=>`<th>${x}</th>`).join('')}</tr></thead><tbody>${live().map(r=>`<tr><td>${r.grade}</td><td>${H(r.disp)}</td><td>${H(E.fmtDate(r.date))}</td><td>${H(r.accuser)}</td><td>${H(r.art)}</td><td>${r.finalPts}</td></tr>`).join('')}</tbody></table></div>`;}
+ function previewHTML(){const info=api.outputInfo?.();return (info?`<h3>Court List ${H(info.listNo)}</h3><p>${H(info.courtDate)} · 담당교사 ${H(info.header.names[0])} · 법무부장 ${H(info.header.names[1])} · 사법위원장 ${H(info.header.names[2])}</p><pre class="fulltext">${H(info.header.notice)}</pre>`:'')+`<div class="tablewrap"><table class="grid"><thead><tr>${['학년','피기소자','날짜','기소자','기소항목','벌점'].map(x=>`<th>${x}</th>`).join('')}</tr></thead><tbody>${live().map(r=>`<tr><td>${r.grade}</td><td>${H(r.disp)}</td><td>${H(E.fmtDate(r.date))}</td><td>${H(r.accuser)}</td><td>${H(r.art)}</td><td>${r.finalPts}</td></tr>`).join('')}</tbody></table></div>`;}
  function view(){
   if(loading)return '<div class="panel">버전2 작업을 불러오는 중…</div>';
   if(!source)return `<div class="panel narrow"><h2>버전2 · 법정리스트 파일</h2><p class="muted">기존 법정리스트 엑셀을 올려 주세요. 파일을 읽은 뒤 추가·삭제 화면으로 이동합니다.</p>${api.dropZone('v2','법정리스트.xlsx 또는 .xlsm 파일 선택')}<p class="muted small">${busy?'파일을 읽는 중…':''}</p></div>`;
@@ -34,10 +34,10 @@ export function createVersion2(api){
  async function add(item){if(busy)return;const C=context(),rep=C.reps.has(E.baseName(item.name));await commit(rows.concat({...item,id:api.uid(),disp:item.name,accuser:E.accuser(item.acc),finalPts:item.pts+(rep?1:0),added:true}));api.toast('기소를 추가했습니다.');}
  async function action(act,button){if(busy)return;try{
   if(act==='v2delete'||act==='v2restore')await commit(rows.map(r=>r.id===button.dataset.id?{...r,deleted:act==='v2delete'}:r));
-  if(act==='v2preview'){preview=true;api.render();}
+  if(act==='v2preview'){if(api.isSaving?.())throw Error('입력 정보 저장이 끝난 뒤 다시 확인해 주세요.');api.outputInfo?.();preview=true;api.render();}
   if(act==='v2remove')api.confirmBox('파일을 삭제할까요?','버전2 파일과 추가·삭제 내역을 지웁니다.','삭제',async()=>{await serial.catch(()=>{});await draftDB(null,true);source=null;buffer=null;rows=[];query='';preview=false;api.render();});
-  if(act==='v2download'&&preview){busy=true;const blob=await writeEditedCourt(buffer,source,live());api.downloadBlob(blob,source.fileName.replace(/\.(xlsx|xlsm)$/i,'')+' 버전2.'+(source.macro?'xlsm':'xlsx'));}
+  if(act==='v2download'&&preview){if(api.isSaving?.())throw Error('입력 정보 저장이 끝난 뒤 다시 눌러 주세요.');busy=true;const blob=await writeEditedCourt(buffer,source,live(),api.outputInfo?.()||null);api.downloadBlob(blob,source.fileName.replace(/\.(xlsx|xlsm)$/i,'')+' 버전2.'+(source.macro?'xlsm':'xlsx'));}
  }catch(e){api.toast('처리하지 못했습니다: '+e.message,7000);}finally{busy=false;}}
  draftDB().then(d=>{if(d){source=d.source;buffer=d.buffer;rows=d.rows;}},e=>api.toast('이 브라우저에서 임시 저장을 사용할 수 없습니다: '+e.message,7000)).finally(()=>{loading=false;api.render();});
- return {view,context,upload,add,action,search(value){query=value;const el=document.getElementById('v2-results');if(el)el.innerHTML=deleteResults();}};
+ return {view,context,upload,add,action,metadataChanged(){preview=false;},search(value){query=value;const el=document.getElementById('v2-results');if(el)el.innerHTML=deleteResults();}};
 }

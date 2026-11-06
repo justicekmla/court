@@ -42,8 +42,24 @@ export async function readCourtFile(buffer, fileName, refDate) {
 export function shiftFormula(formula, delta) {
  return formula.split(/("(?:[^"]|"")*")/g).map((part,i)=>i%2?part:part.replace(/(?<![A-Za-z0-9_])((?:\$?[A-Z]{1,3}))(\$?)(\d+)(?![A-Za-z0-9_(])/g,(all,col,abs,row)=>abs?all:col+Math.max(1,Number(row)+delta))).join('');
 }
-export async function writeEditedCourt(buffer,source,list) {
- const z=await globalThis.JSZip.loadAsync(buffer),x=source.sheetXml;
+export function applyCourtHeaderXml(xml,info) {
+ const setCell=(ref,value)=>{
+  const re=new RegExp('<c\\s([^>]*?\\br="'+ref+'"[^>]*?)(\\/>|>[\\s\\S]*?<\\/c>)');
+  const match=re.exec(xml);
+  const attrs=match?match[1].replace(/\s+t="[^"]*"/g,''):'r="'+ref+'"';
+  const cellXml='<c '+attrs+' t="inlineStr"><is><t xml:space="preserve">'+esc(value??'')+'</t></is></c>';
+  if(match)xml=xml.replace(re,()=>cellXml);
+  else {const row=ref.match(/\d+$/)[0],rowRe=new RegExp('(<row\\b[^>]*\\br="'+row+'"[^>]*>)([\\s\\S]*?)(<\\/row>)');if(!rowRe.test(xml))throw Error('엑셀 머리말 '+ref+' 셀을 찾지 못했습니다.');xml=xml.replace(rowRe,(m,a,b,c)=>a+b+cellXml+c);}
+ };
+ setCell('A1','Court List '+info.listNo+' 법무부용');
+ for(let i=0;i<3;i++){setCell('G'+(i+1),info.header.labels[i]);setCell('H'+(i+1),info.header.names[i]);}
+ const date=E.parts(info.courtDate);setCell('A4',date.m+'/'+date.d+'/'+date.y+'\n'+info.header.notice);
+ return xml;
+}
+export async function writeEditedCourt(buffer,source,list,info=null) {
+ const z=await globalThis.JSZip.loadAsync(buffer);
+ if(info&&source.hdr<5)throw Error('담당자·안내문 머리말이 포함된 법정리스트 양식 파일을 올려 주세요.');
+ const x=info?applyCourtHeaderXml(source.sheetXml,info):source.sheetXml;
  const data=/<sheetData(?:\s[^>]*)?>([\s\S]*?)<\/sheetData>/.exec(x);if(!data)throw Error('원본 행 정보를 찾지 못했습니다.');
  const original=[...data[1].matchAll(/<row\b[^>]*(?:\/>|>[\s\S]*?<\/row>)/g)].map(m=>({xml:m[0],r:Number(xmlAttrs(m[0]).r)}));
  const byRow=new Map(original.map(r=>[r.r,r.xml]));
