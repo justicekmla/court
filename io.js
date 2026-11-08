@@ -125,7 +125,7 @@ export async function writeRefsFile(refs) {
     rows: [heads.map(h => ({ v: h, s: B })), ...(refs[key] || []).map(o => toRow(o).map(v => (v === null || v === undefined) ? '' : v))] }));
   const h = refs.header || { labels: ['담당교사', '법무부장', '사법위원장'], names: ['', '', ''], notice: '' };
   sheets.push({ name: '양식', cols: [4, 6.66, 10.33, 9.66, 10.66, 38.16, 10.16, 10.33], heights: { 4: 206.25 }, merges: ['A1:F3', 'A4:H4'],
-    rows: [['Court List n 법무부용', , , , , , h.labels[0], h.names[0]], [, , , , , , h.labels[1], h.names[1]], [, , , , , , h.labels[2], h.names[2]],
+    rows: [['Court List n Ver.1', , , , , , h.labels[0], h.names[0]], [, , , , , , h.labels[1], h.names[1]], [, , , , , , h.labels[2], h.names[2]],
       [{ v: 'm/d/yyyy\n' + h.notice, s: { wrap: true, v: 'center', font: { sz: 10.5, b: true } } }]] });
   return writeWorkbook(sheets);
 }
@@ -143,7 +143,7 @@ export async function writeCourtList(list, { listNo, sunday, header, courtDate }
   const bodyTxt = { ...body, fmt: '@' };
   const rows = [];
   for (let r = 0; r < 3; r++) {
-    const row = []; for (let c = 0; c < 6; c++) row.push({ v: r === 0 && c === 0 ? 'Court List ' + listNo + ' 법무부용' : '', s: title });
+    const row = []; for (let c = 0; c < 6; c++) row.push({ v: r === 0 && c === 0 ? 'Court List ' + listNo + ' Ver.1' : '', s: title });
     row.push({ v: h.labels[r] || '', s: box }, { v: h.names[r] || '', s: box }); rows.push(row);
   }
   const r4 = [{ v: (courtDate ? (()=>{const p=E.parts(courtDate);return p.m+'/'+p.d+'/'+p.y;})() : wednesdayLabel(sunday)) + '\n' + (h.notice || ''), s: notice }]; for (let c = 1; c < 8; c++) r4.push({ v: '', s: notice }); rows.push(r4);
@@ -166,5 +166,5 @@ export async function writeCourtList(list, { listNo, sunday, header, courtDate }
 }
 export function courtListFileName(listNo, sunday) {
   const mon = E.parts(E.addDays(sunday, -6)), sun = E.parts(sunday);
-  return 'Court List ' + listNo + ' 법무부용 (' + mon.m + '.' + mon.d + '-' + sun.m + '.' + sun.d + ').xlsx';
+  return 'Court List ' + listNo + ' Ver.1 (' + mon.m + '.' + mon.d + '-' + sun.m + '.' + sun.d + ').xlsx';
 }

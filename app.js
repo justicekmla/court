@@ -1,11 +1,11 @@
-import * as CM from './court-meta.js?v=semester-20261107-1';
+import * as CM from './court-meta.js?v=titles-20261108-4';
 import * as Roster from './roster.js?v=semester-20261107-1';
 import {verifyChiefPassword,parseChiefSetup,validChiefVerifier} from './chief-auth.js?v=semester-20261107-1';
 import { sourceStamp, rowsForGroup, combinedRows, currentStamps as stampsForGroups, reviewSnapshotMatches } from './review.js?v=20261107-1';
 import * as E from './engine.js?v=rules-20261108-1';
 import * as M from './manual.js?v=articles-20261108-2';
-import { createVersion2 } from './version2.js?v=articles-20261108-2';
-import * as IO from './io.js?v=semester-20261107-1';
+import { createVersion2 } from './version2.js?v=titles-20261108-4';
+import * as IO from './io.js?v=titles-20261108-4';
 import { firebaseStore, localStore } from './store.js?v=uploads-20261101-1';
 
 // ================================================================ 공통
@@ -385,11 +385,11 @@ function viewList() {
     i = j + 1;
   }
   const sheet = '<div class="court" id="court"><table class="court-t"><colgroup><col style="width:4%"><col style="width:6.7%"><col style="width:10.3%"><col style="width:9.7%"><col style="width:10.7%"><col style="width:38%"><col style="width:10.2%"><col style="width:10.3%"></colgroup>' +
-    '<tr class="tr-title"><td colspan="6" rowspan="3" class="title">Court List ' + H(no) + ' 법무부용</td><td class="hb">' + H(h.labels[0]) + '</td><td class="hb">' + H(h.names[0]) + '</td></tr>' +
+    '<tr class="tr-title"><td colspan="6" rowspan="3" class="title">Court List ' + H(no) + ' Ver.1</td><td class="hb">' + H(h.labels[0]) + '</td><td class="hb">' + H(h.names[0]) + '</td></tr>' +
     '<tr class="tr-title"><td class="hb">' + H(h.labels[1]) + '</td><td class="hb">' + H(h.names[1]) + '</td></tr><tr class="tr-title"><td class="hb">' + H(h.labels[2]) + '</td><td class="hb">' + H(h.names[2]) + '</td></tr>' +
     '<tr><td colspan="8" class="notice">' + H(CM.dateLabel(info.courtDate) + '\n' + h.notice) + '</td></tr>' +
     '<tr class="th"><td>No</td><td>Grade</td><td>Name</td><td>Date</td><td>Accused by</td><td>Violated Article</td><td>Points</td><td>Sum</td></tr>' + body + '</table></div>';
-  return steps(4) + '<div class="panel"><div class="head-row"><h2>Court List ' + H(no) + ' 법무부용</h2><span class="muted">' + list.length + '건 · ' + E.fmtMD(E.addDays(sun, -6)) + '~' + E.fmtMD(sun) + ' · 날짜 ' + CM.dateLabel(info.courtDate) + '</span><span class="grow"></span>' +
+  return steps(4) + '<div class="panel"><div class="head-row"><h2>Court List ' + H(no) + ' Ver.1</h2><span class="muted">' + list.length + '건 · ' + E.fmtMD(E.addDays(sun, -6)) + '~' + E.fmtMD(sun) + ' · 날짜 ' + CM.dateLabel(info.courtDate) + '</span><span class="grow"></span>' +
     '<button class="ghost" data-act="backExtras">← 추가 기소</button><button class="primary" data-act="dlx">엑셀 다운로드</button><button class="outline" data-act="pdf">PDF 저장</button></div>' +
     '<div class="head-row"><label class="small"><input type="checkbox" data-act="colors" ' + (S.showColors ? 'checked' : '') + '> 확인할 칸 색 표시 (다운로드 파일에는 색이 없습니다)</label><span class="grow"></span><button class="danger ghost small" data-act="newWeek">새로 시작 (다음 주)</button></div>' +
     (issues.length ? '<details class="issues" open><summary>확인 필요 ' + issues.length + '건</summary><div class="tablewrap"><table class="grid compact"><thead><tr><th>이름</th><th>날짜</th><th>항목</th><th>칸</th><th>사유</th><th>출처</th></tr></thead><tbody>' +

@@ -17,6 +17,8 @@ const rows=[{name:'가상학생',disp:'가상학생',grade:1,date:'2026-11-01',a
 test('explicit court date and all notice placeholders are independent of upload Sunday',()=>{
  assert.equal(info.courtDate,'2026-12-04');assert.equal(info.listNo,37);assert.deepEqual(info.header.names,[meta.teacher,meta.chief,meta.chair]);
  for(const k of ['speechRecipient','contactName','contactPhone','secondContactName','secondContactPhone'])assert(info.header.notice.includes(meta[k]));
+ assert(info.header.notice.includes('the chair of the Judicial Branch'));
+ assert(metadataPanel(meta,{version:'1'}).includes('최후변론서 제출 대상 (사법부위원장)'));
  assert(!info.header.notice.includes('OOO'));assert(info.header.notice.endsWith('<Defendants>'));
 });
 test('semester fields survive next-week state changes and explicit reset stays empty',()=>{
@@ -34,7 +36,7 @@ test('roster replacement control is visible only on version1',()=>{
 });
 test('version1 exports metadata into original header cells and leaves charges unchanged',async()=>{
  const blob=await writeCourtList(rows,info),[sheet]=await readWorkbook(await blob.arrayBuffer());
- assert.equal(cell(sheet,1,1).v,'Court List 37 법무부용');
+ assert.equal(cell(sheet,1,1).v,'Court List 37 Ver.1');
  assert.equal(cell(sheet,1,8).v,meta.teacher);assert.equal(cell(sheet,2,8).v,meta.chief);assert.equal(cell(sheet,3,8).v,meta.chair);
  assert.equal(cell(sheet,4,1).v,'12/4/2026\n'+buildNotice(meta));
  assert.equal(cell(sheet,6,3).v,'가상학생');assert.equal(cell(sheet,6,7).v,5);
@@ -44,7 +46,7 @@ test('version2 updates the same cells and preserves original VBA and other packa
  const z=await JSZip.loadAsync(await original.arrayBuffer());z.file('xl/vbaProject.bin',new Uint8Array([9,8,7]));z.file('xl/retained.xml','unchanged');
  const buffer=await z.generateAsync({type:'uint8array'}),source=await readCourtFile(buffer,'test.xlsm',sunday);
  const output=await writeEditedCourt(buffer,source,source.rows,info),out=await output.arrayBuffer(),[sheet]=await readWorkbook(out);
- assert.equal(cell(sheet,1,1).v,'Court List 37 법무부용');assert.equal(cell(sheet,1,8).v,meta.teacher);
+ assert.equal(cell(sheet,1,1).v,'Court List 37 Ver.2');assert.equal(cell(sheet,1,8).v,meta.teacher);
  assert.equal(cell(sheet,2,8).v,meta.chief);assert.equal(cell(sheet,3,8).v,meta.chair);assert.equal(cell(sheet,4,1).v,'12/4/2026\n'+buildNotice(meta));
  const saved=await JSZip.loadAsync(out);assert.deepEqual([...await saved.file('xl/vbaProject.bin').async('uint8array')],[9,8,7]);assert.equal(await saved.file('xl/retained.xml').async('string'),'unchanged');
 });
@@ -67,4 +69,13 @@ test('public password module rejects unconfigured credentials and validates priv
  assert.deepEqual(parseChiefSetup('#chief-setup='+btoa(JSON.stringify(testConfig))),testConfig);
  assert.equal(parseChiefSetup('#chief-setup=bad'),null);
  const source=await fs.readFile(new URL('../chief-auth.js',import.meta.url),'utf8');assert(!/const (SALT|DIGEST)\s*=/.test(source));
+});
+
+test('version2 without new metadata still updates the source title and preserves its notice',async()=>{
+ const original=await writeCourtList(rows,{listNo:26,sunday,header:{labels:['a','b','c'],names:['one','two','three'],notice:'Original notice'}});
+ const buffer=await original.arrayBuffer(),source=await readCourtFile(buffer,'Court List 26.xlsx',sunday);
+ const output=await writeEditedCourt(buffer,source,source.rows),[sheet]=await readWorkbook(await output.arrayBuffer());
+ assert.equal(cell(sheet,1,1).v,'Court List 26 Ver.2');
+ assert.equal(cell(sheet,1,8).v,'one');
+ assert(cell(sheet,4,1).v.includes('Original notice'));
 });

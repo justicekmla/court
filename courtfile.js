@@ -36,7 +36,7 @@ export async function readCourtFile(buffer, fileName, refDate) {
  if(!rel) throw Error('첫 번째 시트 연결 정보를 읽지 못했습니다.');
  const path=rel.Target.startsWith('/')?rel.Target.slice(1):'xl/'+rel.Target.replace(/^\.\//,'');
  const sheetXml=await z.file(path)?.async('string');if(!sheetXml)throw Error('시트 원본을 찾지 못했습니다.');
- return {fileName,rows,hdr,path,sheetName:sh.name,sheetXml,macro:z.file('xl/vbaProject.bin')!==null};
+ return {fileName,rows,hdr,path,sheetName:sh.name,sheetXml,listNo:/Court\s+List\s+(\d+)/i.exec(String(cell(sh,1,1).v))?.[1]||'',macro:z.file('xl/vbaProject.bin')!==null};
 }
 // Move relative formula references with their source row; absolute references stay fixed.
 export function shiftFormula(formula, delta) {
@@ -51,7 +51,8 @@ export function applyCourtHeaderXml(xml,info) {
   if(match)xml=xml.replace(re,()=>cellXml);
   else {const row=ref.match(/\d+$/)[0],rowRe=new RegExp('(<row\\b[^>]*\\br="'+row+'"[^>]*>)([\\s\\S]*?)(<\\/row>)');if(!rowRe.test(xml))throw Error('엑셀 머리말 '+ref+' 셀을 찾지 못했습니다.');xml=xml.replace(rowRe,(m,a,b,c)=>a+b+cellXml+c);}
  };
- setCell('A1','Court List '+info.listNo+' 법무부용');
+ setCell('A1','Court List '+info.listNo+' Ver.2');
+ if(!info.header)return xml;
  for(let i=0;i<3;i++){setCell('G'+(i+1),info.header.labels[i]);setCell('H'+(i+1),info.header.names[i]);}
  const date=E.parts(info.courtDate);setCell('A4',date.m+'/'+date.d+'/'+date.y+'\n'+info.header.notice);
  return xml;
@@ -59,7 +60,8 @@ export function applyCourtHeaderXml(xml,info) {
 export async function writeEditedCourt(buffer,source,list,info=null) {
  const z=await globalThis.JSZip.loadAsync(buffer);
  if(info&&source.hdr<5)throw Error('담당자·안내문 머리말이 포함된 법정리스트 양식 파일을 올려 주세요.');
- const x=info?applyCourtHeaderXml(source.sheetXml,info):source.sheetXml;
+ const sourceNo = source.listNo || /Court\s+List\s+(\d+)/i.exec(source.sheetXml)?.[1];
+ const x=info?applyCourtHeaderXml(source.sheetXml,info):sourceNo?applyCourtHeaderXml(source.sheetXml,{listNo:sourceNo}):source.sheetXml;
  const data=/<sheetData(?:\s[^>]*)?>([\s\S]*?)<\/sheetData>/.exec(x);if(!data)throw Error('원본 행 정보를 찾지 못했습니다.');
  const original=[...data[1].matchAll(/<row\b[^>]*(?:\/>|>[\s\S]*?<\/row>)/g)].map(m=>({xml:m[0],r:Number(xmlAttrs(m[0]).r)}));
  const byRow=new Map(original.map(r=>[r.r,r.xml]));
