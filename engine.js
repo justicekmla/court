@@ -197,6 +197,8 @@ export function displayName(C, n) {
 const isNonName = (C, w) => C.nonNames.has(w) || w.includes('취하') || w.includes('기소');
 export function findArticle(C, s, poster) {
   const low = s.toLowerCase();
+  if (groupOf(poster) === '남사감' && /지각/.test(s)) return {art: C.articleList.find(a => a.toLowerCase() === 'late for school 7') || 'Late for school 7', fixed: undefined, kw: '지각'};
+  if (groupOf(poster) === '남사감' && /통금\s*위반/.test(s)) return {art: C.articleList.find(a => a.toLowerCase() === 'violated curfew regulation') || 'Violated curfew regulation', fixed: 8, kw: s.match(/통금\s*위반/)[0]};
   for (const d of C.dict) {
     if (low.includes(d.kw.toLowerCase())) {
       const cond = d.poster;
@@ -302,7 +304,10 @@ export function parsePost(C, p) {
     const ln = vbTrim(lines[i]); if (!ln) continue;
     const g = gradeHint(C, ln); if (g > 0) postHint = g;
     const per = new Map();
-    const line2 = grabParens(C, ln, per, poster);
+    const maleCurfew = groupOf(poster) === '남사감' && (/통금\s*위반/.test(ln) || (!findArticle(C, ln, poster).art && curArt.toLowerCase() === 'violated curfew regulation'));
+    // Parenthesized names are separate 3-point defendants, not annotations.
+    const expanded = maleCurfew ? ln.replace(/\(([^()]*)\)/g, (whole, inner) => words(inner).some(([w]) => isKnown(C,w)) ? ' ' + inner + ' ' : whole) : ln;
+    const line2 = grabParens(C, expanded, per, poster);
     const { art, fixed, kw } = findArticle(C, line2, poster);
     let stated; if (art) { const k = numBefore(line2, '점'); if (k > 0) stated = k; }
     const rep = repCount(line2);
@@ -327,6 +332,7 @@ export function parsePost(C, p) {
     }
     for (const t of names) {
       let hint = postHint, mult = 1, ptsOv;
+      if (maleCurfew) ptsOv = curfewPoints(ln, t);
       let dts = [lineMo > 0 ? [lineMo, lineDy] : [curMo, curDy]];
       for (const inner of per.get(t) || []) {
         const g2 = gradeHint(C, inner); if (g2 > 0) hint = g2;
@@ -406,6 +412,7 @@ export function mentionsToRows(C, mentions, midStart = 0) {
     }
     let d;
     if (m.src === 'file') { d = m.fullDate || ''; if (!d) flags.push(['date', '날짜 없음']); }
+    else if (groupOf(m.user) === '여사감') { d = m.mo > 0 ? makeDate(m.postDate, m.mo, m.dy) : (C.femaleDefaultDate || C.baseDate); if (!d) flags.push(['date','날짜 없음']); }
     else { d = m.mo > 0 ? makeDate(m.postDate, m.mo, m.dy) : ''; const r = checkDate(m.postDate, d); d = r.d; if (r.msg) flags.push(['date', r.msg]); }
     const art = m.art;
     let pts = 0, mult = m.mult;
@@ -434,7 +441,7 @@ export function mentionsToRows(C, mentions, midStart = 0) {
     const n = art ? m.rep * mult : 1;
     for (let k = 0; k < n; k++) {
       rows.push({ name: nm, ambig, tok, date: d, art, pts, flags: flags.map(f => f.slice()), accuser: accuser(m.user), post: m.post, line: m.line,
-        group: m.group, mid: mid_, wd: !!m.wd, src: m.src, user: m.user, lineNo: m.lineNo, title: m.title || '', unassigned: !art });
+        dateDefaulted: m.src !== 'file' && groupOf(m.user) === '여사감' && !m.mo, group: m.group, mid: mid_, wd: !!m.wd, src: m.src, user: m.user, lineNo: m.lineNo, title: m.title || '', unassigned: !art });
     }
   }
   // 동명이인: 같은 줄 이름들의 학년으로 추정
@@ -492,10 +499,53 @@ export function refreshEdited(C, r) {
 }
 export function sourceLabel(r) { return r.src === 'file' ? String(r.post) : '글 ' + r.post + '(' + r.user + ')'; }
 
+// Apply source rules on copies only: saved drafts and manual corrections remain intact.
+function curfewPoints(line, name) {
+  const target = baseName(name);
+  for (const match of normalize(line || '').matchAll(/\(([^()]*)\)/g)) {
+    if (words(match[1]).some(([w]) => baseName(w) === target)) return 3;
+  }
+  return 8;
+}
+// Recover parenthesized defendants omitted by the old parser without rewriting data.
+export function expandSourceRows(C, input) {
+  const rows = input.slice();
+  for (const r of input) {
+    if (r.src === 'file' || r.added || r.placeholder || groupOf(r.user) !== '남사감' || !/^violated curfew regulation$/i.test(r.art || '')) continue;
+    for (const match of normalize(r.line || '').matchAll(/\(([^()]*)\)/g)) {
+      for (const [tok] of words(match[1])) {
+        const found = lookup(C,tok,gradeOf(C,r.name));
+        if (found.length !== 1) continue;
+        const name = found[0];
+        if (rows.some(q => q.group === r.group && (q.name === name || q.tok === tok))) continue;
+        const id = r.id + '-curfew-' + name;
+        rows.push({...r, id, mid: id, name, tok, pts: 3, flags: [], edited: [], recoveredFrom: r.id, keepDuplicate: false});
+      }
+    }
+  }
+  return rows;
+}
+export function applySourceRules(C, row) {
+  const r = {...row, flags: (row.flags || []).map(f => f.slice())};
+  const edited = new Set(r.edited || []);
+  if (r.src === 'file' || r.added || r.placeholder) return r;
+  const male = groupOf(r.user) === '남사감';
+  if (male && !edited.has('art') && /지각/.test(r.line || '') && /^late for school(?: 7)?$/i.test(r.art || '')) {
+    r.art = C.articleList.find(a => a.toLowerCase() === 'late for school 7') || 'Late for school 7';
+    if (!edited.has('pts')) { const pts = C.artPoints.get(r.art); if (typeof pts === 'number') r.pts = pts; }
+  }
+  if (male && !edited.has('pts') && /^violated curfew regulation$/i.test(r.art || '')) r.pts = curfewPoints(r.line, r.tok || r.name);
+  if (groupOf(r.user) === '여사감' && !edited.has('date') && (!r.date || r.dateDefaulted)) {
+    r.date = C.femaleDefaultDate || C.baseDate;
+    r.flags = r.flags.filter(f => f[0] !== 'date');
+  }
+  return r;
+}
+
 // rows(모든 줄, 사람이 고친 것 포함) → 중복·취하 판정과 최종 리스트
 // 각 줄의 status: ok | dup | withdrawn | wdreq | excluded | deleted | unassigned | placeholder
 export function compute(C, rowsIn) {
-  const rows = rowsIn.map(r => refreshEdited(C, { ...r, flags: (r.flags || []).map(f => f.slice()), edited: r.edited ? r.edited.slice() : undefined }));
+  const rows = expandSourceRows(C, rowsIn).map(r => refreshEdited(C, applySourceRules(C, r)));
   rows.forEach((r, i) => { r._i = (typeof r.seq === 'number') ? r.seq : i; });
   const ordered = rows.slice().sort((a, b) => (a.order || 0) - (b.order || 0) || a._i - b._i || 0);
   for (const r of ordered) {
@@ -517,7 +567,7 @@ export function compute(C, rowsIn) {
     for (const [k, v] of byMid) if (v.length > bestN) { bestN = v.length; best = k; }
     finalRows.push(...byMid.get(best));
     const note = '중복 - ' + sourceLabel(byMid.get(best)[0]) + ' 기소로 반영됨';
-    for (const [k, v] of byMid) if (k !== best) for (const r of v) { r.status = 'dup'; r.note = note; }
+    for (const [k, v] of byMid) if (k !== best) for (const r of v) { if (r.keepDuplicate) { finalRows.push(r); r.note = '중복 예외 반영'; } else { r.status = 'dup'; r.note = note; } }
   }
   // 취하
   const wdLog = []; const seen = new Set();

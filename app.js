@@ -2,7 +2,7 @@ import * as CM from './court-meta.js?v=semester-20261107-1';
 import * as Roster from './roster.js?v=semester-20261107-1';
 import {verifyChiefPassword,parseChiefSetup,validChiefVerifier} from './chief-auth.js?v=semester-20261107-1';
 import { sourceStamp, rowsForGroup, combinedRows, currentStamps as stampsForGroups, reviewSnapshotMatches } from './review.js?v=20261107-1';
-import * as E from './engine.js?v=20261107';
+import * as E from './engine.js?v=rules-20261108-1';
 import * as M from './manual.js?v=20261107';
 import { createVersion2 } from './version2.js?v=semester-20261107-1';
 import * as IO from './io.js?v=semester-20261107-1';
@@ -54,12 +54,13 @@ const refsReady = () => !!(S.docs.refs && S.docs.refs.roster && S.docs.refs.rost
 function sundayOf() { return st().sunday || E.lastSunday(todayIso()); }
 let ctxCache = { key: '', C: null };
 function ctx() {
-  const key = (S.docs.refs ? S.docs.refs.updatedAt || 'x' : '') + '|' + sundayOf();
-  if (ctxCache.key !== key) ctxCache = { key, C: E.makeCtx(S.docs.refs || {}, sundayOf()) };
+  const key = (st().courtMeta?.courtDate || '') + '|' + (S.docs.refs ? S.docs.refs.updatedAt || 'x' : '') + '|' + sundayOf();
+  if (ctxCache.key !== key) ctxCache = { key, C: Object.assign(E.makeCtx(S.docs.refs || {}, sundayOf()), {femaleDefaultDate: st().courtMeta?.courtDate || sundayOf()}) };
   return ctxCache.C;
 }
 const gdoc = g => S.docs['g_' + GKEY[g]];
-const working = g => { const d = gdoc(g); return d ? (d.draft || d.rows || []) : []; };
+const draftBuffers = new Map(), groupWrites = new Map();
+const working = g => { const d = gdoc(g), buffer = draftBuffers.get(g); return buffer && buffer.revision === (d?.revision || '') ? buffer.rows : d ? (d.draft || d.rows || []) : []; };
 const committed = g => { const d = gdoc(g); return d ? (d.rows || []) : []; };
 const allDone = () => E.GROUPS.every(g => gdoc(g) && gdoc(g).done);
 function postsById() { const m = new Map(); for (const p of (S.docs.posts && S.docs.posts.posts) || []) m.set(String(p.id), p); return m; }
@@ -247,7 +248,7 @@ async function doOrganize(group, empty = false) {
     toast('다른 업무 작성자의 글이 포함되어 있습니다. ' + group + '에 해당하는 글만 선택해 주세요.', 6000); return;
   }
   const monday = E.addDays(sunday, -6);
-  const wk = E.extractWeek(E.makeCtx(S.docs.refs, sunday), posts, monday, sunday);
+  const wk = E.extractWeek(Object.assign(E.makeCtx(S.docs.refs, sunday), {femaleDefaultDate: st().courtMeta?.courtDate || sunday}), posts, monday, sunday);
   if (!empty && !wk.posts.length) { toast('해당 주의 글이 없습니다. 기준 일요일을 확인하세요.', 5000); return; }
   await save(async () => {
     await store.transaction(async tx => {
@@ -435,11 +436,11 @@ function viewMember() {
   const mine = working(S.group);
   const others = E.GROUPS.filter(g => g !== S.group).flatMap(g => committed(g));
   const res = computeFor(mine.concat(others)); const sm = statusMap(res);
-  const cnt = counts(res.rows.filter(r => mine.some(m => m.id === r.id)));
+  const cnt = counts(res.rows.filter(r => E.groupOf(r.user) === S.group));
   return '<div class="panel"><div class="head-row"><h2>' + H(S.group) + ' <span class="muted small">' + GDESC[S.group] + '</span></h2><span class="grow"></span>' +
-    '<button class="primary" data-act="memberDone">크로스체킹 완료</button></div>' +
-    '<p class="muted">원문과 나란히 보며 이름·날짜·항목·점수를 고치세요. 고친 내용은 자동 저장되고, [크로스체킹 완료]를 누르면 통합 정리본에 한꺼번에 반영됩니다.</p>' + summaryChips(cnt) + legend() +
-    rowsTable(mine, sm, { scope: 'group' }) + '<div class="foot-row"><button class="primary big" data-act="memberDone">크로스체킹 완료</button></div></div>';
+    '<button class="outline" data-act="saveDraft">임시저장</button><button class="primary" data-act="memberDone">크로스체킹 완료</button></div>' +
+    '<p class="muted">원문과 나란히 보며 이름·날짜·항목·점수를 고치세요. 고친 내용은 자동 저장됩니다. [임시저장] 후 저장 완료를 확인하면 나중에 다시 들어와 이어서 할 수 있습니다. [크로스체킹 완료]를 누르면 통합 정리본에 한꺼번에 반영됩니다.</p>' + summaryChips(cnt) + legend() +
+    rowsTable(mine, sm, { scope: 'group' }) + '<div class="foot-row"><button class="outline big" data-act="saveDraft">임시저장</button><button class="primary big" data-act="memberDone">크로스체킹 완료</button></div></div>';
 }
 function legend() { return '<p class="legend"><span class="f-name">명단에 없는 이름</span><span class="f-ambig">동명이인 추정</span><span class="f-date">날짜 없음·오타 의심</span><span class="f-pts">점수 미기재·벌점표에 없음</span><span class="st-dup">중복·취하(회색)</span></p>'; }
 
@@ -452,7 +453,7 @@ function artSelect(val, attr, cls, poster) {
 }
 function statusBadge(r) {
   switch (r.status) {
-    case 'ok': return r.wd ? '' : '<span class="b ok">반영</span>';
+    case 'ok': return r.wd ? '' : '<span class="b ok">' + (r.keepDuplicate ? '중복 예외 반영' : '반영') + '</span>';
     case 'dup': return '<span class="b gray" title="' + H(r.note) + '">' + H(r.note) + '</span>';
     case 'withdrawn': return '<span class="b gray">' + H(r.note) + '</span>';
     case 'wdreq': return '<span class="b wd">취하 요청</span> <span class="small">' + H(r.note) + '</span>';
@@ -463,6 +464,7 @@ function statusBadge(r) {
   }
 }
 function rowsTable(rows, sm, opt) {
+  rows = E.expandSourceRows(ctx(), rows);
   const P = postsById(); const C = ctx();
   const order = []; const by = new Map();
   for (const r of rows) { if (!by.has(r.post)) { by.set(r.post, []); order.push(r.post); } by.get(r.post).push(r); }
@@ -474,8 +476,8 @@ function rowsTable(rows, sm, opt) {
     const excl = list.some(r => r.excluded);
     const real = list.filter(r => !r.placeholder);
     let lastLine = null;
-    const trs = real.map(r => {
-      const c = sm.get(r.id) || r; const fl = kinds(c);
+    const trs = real.map(saved => {
+      const c = sm.get(saved.id) || saved; const r = c; const fl = kinds(c);
       const gray = ['dup', 'withdrawn', 'excluded', 'deleted'].includes(c.status);
       const showLine = r.lineNo !== lastLine; lastLine = r.lineNo;
       const nameVal = r.edited && r.edited.includes('name') ? r.name : (C.rosterFull.has(r.name) ? E.displayName(C, r.name) : (r.name || r.tok));
@@ -487,7 +489,7 @@ function rowsTable(rows, sm, opt) {
         '<td><input class="cell ' + (fl.date ? 'f-date' : '') + '" data-f="date" value="' + H(r.date ? E.fmtMD(r.date) : '') + '" placeholder="날짜" size="5" title="' + H(fl.date || '') + '"></td>' +
         '<td>' + artSelect(r.art, 'data-f="art"', fl.pts ? 'f-pts' : '', r.user) + '</td>' +
         '<td><input class="cell num ' + (fl.pts ? 'f-pts' : '') + '" data-f="pts" value="' + H(ptsVal) + '" size="2" title="' + H(fl.pts || '') + '">' + (C.reps.has(E.baseName(c.name || '')) && c.art ? '<span class="rep" title="학생대표: 리스트에서 +1점">+1</span>' : '') + '</td>' +
-        '<td class="stat">' + statusBadge(c) + '</td>' +
+        '<td class="stat">' + statusBadge(c) + ((c.status === 'dup' || r.keepDuplicate) ? '<button class="outline small" data-act="toggleDuplicate">' + (r.keepDuplicate ? '중복 자동 처리로 되돌리기' : '중복이어도 반영') + '</button>' : '') + '</td>' +
         '<td>' + (c.status === 'deleted' ? '<button class="icon" data-act="undel" title="되살리기">↺</button>' : '<button class="icon" data-act="del" title="이 줄 지우기">✕</button>') + '</td></tr>';
     }).join('');
     const open = S.openPosts.has(String(pid));
@@ -502,17 +504,37 @@ function rowsTable(rows, sm, opt) {
 }
 
 // ================================================================ 고치기 (부원: 내 담당 draft / 부장: final)
-function scopeRows(scope) { return scope === 'final' ? clone(finalRows()) : clone(working(S.group)); }
+function scopeRows(scope) { return scope === 'final' ? clone(E.expandSourceRows(ctx(), finalRows())) : clone(E.expandSourceRows(ctx(), working(S.group))); }
 function saveScope(scope, rows) {
   if (scope === 'final') { S.docs.final = { ...(S.docs.final || {}), rows, sourceStamps: currentStamps(), reviewed: {} }; return save(() => store.set('cur/final', { rows, sourceStamps: currentStamps(), reviewed: {}, updatedAt: new Date().toISOString() })); }
-  const k = 'cur/g_' + GKEY[S.group]; const d = gdoc(S.group);
-  S.docs['g_' + GKEY[S.group]] = { ...d, draft: rows };
+  const group = S.group, k = 'cur/g_' + GKEY[group];
   const revision = S.editRevision;
-  return save(() => store.transaction(async tx => {
+  const buffer = {rows, revision}; draftBuffers.set(group, buffer);
+  const previous = groupWrites.get(group) || Promise.resolve(true);
+  const task = previous.then(() => save(() => store.transaction(async tx => {
     const latest = await tx.get(k);
     if (!latest || latest.done || (latest.revision || '') !== revision) throw Error('자료가 갱신되었습니다. 새로고침 후 다시 수정해 주세요.');
     tx.set(k, { ...latest, draft: rows, savedAt: new Date().toISOString() });
-  }));
+  }))).then(ok => {
+    if (ok && draftBuffers.get(group) === buffer) {
+      S.docs['g_' + GKEY[group]] = {...gdoc(group), draft: rows};
+      draftBuffers.delete(group);
+    }
+    return ok;
+  });
+  groupWrites.set(group, task);
+  return task;
+}
+async function flushGroupWrites() {
+  const task = groupWrites.get(S.group);
+  return task ? await task : true;
+}
+async function saveDraft() {
+  if (!S.group || gdoc(S.group)?.done) return;
+  // Clicking blurs the active cell first, so its change handler joins the queue.
+  const rows = clone(working(S.group));
+  const ok = await saveScope('group', rows);
+  if (ok) { toast('임시저장 완료 · 다시 들어와 이어서 할 수 있습니다', 4500); render(); }
 }
 function defaultPts(art) {
   const C = ctx(); const b = C.artPoints.get(art);
@@ -533,6 +555,7 @@ function rowAction(scope, id, act) {
   const rows = scopeRows(scope); const r = rows.find(x => x.id === id); if (!r) return;
   if (act === 'del') { if (r.added) rows.splice(rows.indexOf(r), 1); else r.deleted = true; }
   if (act === 'undel') delete r.deleted;
+  if (act === 'toggleDuplicate') r.keepDuplicate = !r.keepDuplicate;
   saveScope(scope, rows); render();
 }
 function postAction(scope, pid, act) {
@@ -576,10 +599,11 @@ app.addEventListener('click', async ev => {
     case 'closeSettings': S.view = ''; render(); break;
     case 'organize': await doOrganize(b.dataset.g); break;
     case 'emptyGroup': await doOrganize(b.dataset.g, true); break;
-    case 'del': case 'undel': rowAction(tr.dataset.scope, tr.dataset.id, act); break;
+    case 'del': case 'undel': case 'toggleDuplicate': rowAction(tr.dataset.scope, tr.dataset.id, act); break;
     case 'addRow': case 'excl': case 'incl': postAction(b.dataset.scope, b.dataset.pid, act); break;
     case 'toggleText': { const k = String(b.dataset.pid); S.openPosts.has(k) ? S.openPosts.delete(k) : S.openPosts.add(k); render(); break; }
-    case 'memberDone': confirmBox('크로스체킹을 마칠까요?', '<b>' + H(S.group) + '</b>의 수정 내용이 통합 정리본에 반영되고, 이후에는 고칠 수 없습니다.', '완료', async () => {
+    case 'saveDraft': await saveDraft(); break;
+    case 'memberDone': if (!(await flushGroupWrites())) break; confirmBox('크로스체킹을 마칠까요?', '<b>' + H(S.group) + '</b>의 수정 내용이 통합 정리본에 반영되고, 이후에는 고칠 수 없습니다.', '완료', async () => {
       const k = 'cur/g_' + GKEY[S.group]; const d = gdoc(S.group);
       await save(() => store.transaction(async tx => {
         const latest = await tx.get(k);
