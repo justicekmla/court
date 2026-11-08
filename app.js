@@ -446,7 +446,7 @@ function legend() { return '<p class="legend"><span class="f-name">명단에 없
 
 // ================================================================ 표 (원문 줄 | 이름 | 날짜 | 항목 | 점수 | 상태)
 function artSelect(val, attr, cls, poster) {
-  const C = ctx(); const list = C.articleList; let v = val || '';
+  const C = ctx(); const list = [...new Set([...C.articleList, ...M.ARTICLES])]; let v = val || '';
   if (v && !list.includes(v)) { const r = E.resolveArticle(C, v, poster || ''); if (list.includes(r)) v = r; }
   return '<select class="cell ' + (cls || '') + '" ' + attr + '><option value="">(항목 선택)</option>' + list.map(a => '<option' + (a === v ? ' selected' : '') + '>' + H(a) + '</option>').join('') +
     (v && !list.includes(v) ? '<option selected>' + H(v) + '</option>' : '') + '</select>';
