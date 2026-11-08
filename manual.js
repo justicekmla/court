@@ -4,7 +4,7 @@ export const ARTICLES = [
 'Absent from school', 'Absent from 혼정', 'Violated outdoor regualtion(심신수련)', 'Absent from court',
 'Violated cleaning regulation', 'Violated cleaning regulation(택배)', 'Violated computer regulation in School',
 'Violated computer regulation in Dorm', 'Violated self-study regulation', 'Violated curfew regulation',
-'Dress code in Dorm', 'Dress code in School', 'Violated outdoor regulation', 'Violated food regulation',
+'Dress code in Dorm', 'Dress code in School', 'Dresscode', 'Nametag', 'Violated outdoor regulation', 'Violated food regulation',
 "Did not follow teacher's direction in Dorm", "Did not follow teacher's direction", 'Used electronic device',
 'Destroyed school property', 'Auditory disturbance', 'Lied in School', 'Lied in Dorm', 'Insolent attitude',
 'Violated EOP regulation', 'Did not return school library books'];

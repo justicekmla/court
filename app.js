@@ -3,8 +3,8 @@ import * as Roster from './roster.js?v=semester-20261107-1';
 import {verifyChiefPassword,parseChiefSetup,validChiefVerifier} from './chief-auth.js?v=semester-20261107-1';
 import { sourceStamp, rowsForGroup, combinedRows, currentStamps as stampsForGroups, reviewSnapshotMatches } from './review.js?v=20261107-1';
 import * as E from './engine.js?v=rules-20261108-1';
-import * as M from './manual.js?v=20261107';
-import { createVersion2 } from './version2.js?v=semester-20261107-1';
+import * as M from './manual.js?v=articles-20261108-2';
+import { createVersion2 } from './version2.js?v=articles-20261108-2';
 import * as IO from './io.js?v=semester-20261107-1';
 import { firebaseStore, localStore } from './store.js?v=uploads-20261101-1';
 
