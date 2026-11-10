@@ -2,7 +2,7 @@ import * as CM from './court-meta.js?v=titles-20261108-4';
 import * as Roster from './roster.js?v=semester-20261107-1';
 import {verifyChiefPassword,parseChiefSetup,validChiefVerifier} from './chief-auth.js?v=semester-20261107-1';
 import { sourceStamp, rowsForGroup, combinedRows, currentStamps as stampsForGroups, reviewSnapshotMatches } from './review.js?v=20261107-1';
-import * as E from './engine.js?v=rules-20261108-1';
+import * as E from './engine.js?v=points-20261110-1';
 import * as M from './manual.js?v=articles-20261108-2';
 import { createVersion2 } from './version2.js?v=titles-20261108-4';
 import * as IO from './io.js?v=titles-20261108-4';
@@ -458,7 +458,7 @@ function statusBadge(r) {
     case 'withdrawn': return '<span class="b gray">' + H(r.note) + '</span>';
     case 'wdreq': return '<span class="b wd">취하 요청</span> <span class="small">' + H(r.note) + '</span>';
     case 'unassigned': return '<span class="b err">' + (r.wd ? H(r.note) : '항목 없음 → 항목을 고르면 반영') + '</span>';
-    case 'excluded': return '<span class="b gray">제외된 글</span>';
+    case 'excluded': return '<span class="b gray">' + H(r.sourceSuppressed ? r.note : '제외된 글') + '</span>';
     case 'deleted': return '<span class="b gray">지움</span>';
     default: return '';
   }

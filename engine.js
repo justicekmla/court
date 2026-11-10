@@ -264,7 +264,7 @@ export function toDate(v, refDate) {
 function grabParens(C, s, per, poster) {
   let out = '', pos = 1, a = inStr(1, s, '(');
   while (a > 0) {
-    const b = inStr(a + 1, s, ')'); if (b === 0) break;
+    let b = inStr(a + 1, s, ')'); if (b === 0) break;
     let i = a - 1; while (i >= 1 && isSpace(at(s, i))) i--;
     const wEnd = i; while (i >= 1 && isWordCh(at(s, i))) i--;
     const wStart = i + 1;
@@ -272,6 +272,13 @@ function grabParens(C, s, per, poster) {
       const w = mid(s, wStart, wEnd - wStart + 1), inner = mid(s, a + 1, b - a - 1);
       if (isNameShape(w) && !isNonName(C, w) && findArticle(C, w, poster).art === '' && (isKnown(C, w) || isPureHangul24(w))) {
         if (!per.has(w)) per.set(w, []); per.get(w).push(inner);
+        // Consecutive annotations belong to the same student, including spaces.
+        let next = b + 1; while (isSpace(at(s, next))) next++;
+        while (at(s, next) === '(') {
+          const end = inStr(next + 1, s, ')'); if (!end) break;
+          per.get(w).push(mid(s, next + 1, end - next - 1)); b = end;
+          next = b + 1; while (isSpace(at(s, next))) next++;
+        }
         out += mid(s, pos, wEnd - pos + 1); pos = b + 1;
       }
     }
@@ -433,7 +440,7 @@ export function mentionsToRows(C, mentions, midStart = 0) {
       } else {
         pts = Math.trunc(Number(base));
         if (stated !== undefined && stated !== pts && pts !== 0) {
-          if (stated % pts === 0 && m.src !== 'file') mult = mult * Math.floor(stated / pts);
+          if (m.ptsOv === undefined && stated % pts === 0 && m.src !== 'file') mult = mult * Math.floor(stated / pts);
           else pts = stated;
         }
       }
@@ -509,7 +516,7 @@ function curfewPoints(line, name) {
 }
 // Recover parenthesized defendants omitted by the old parser without rewriting data.
 export function expandSourceRows(C, input) {
-  const rows = input.slice();
+  const rows = repairPersonalPoints(C, input);
   for (const r of input) {
     if (r.src === 'file' || r.added || r.placeholder || groupOf(r.user) !== '남사감' || !/^violated curfew regulation$/i.test(r.art || '')) continue;
     for (const match of normalize(r.line || '').matchAll(/\(([^()]*)\)/g)) {
@@ -524,6 +531,33 @@ export function expandSourceRows(C, input) {
     }
   }
   return rows;
+}
+// Re-evaluate old generated rows on copies. Keep their IDs and all manual edits;
+// surplus automatic rows stay in the draft, visibly excluded from the result.
+function repairPersonalPoints(C, input) {
+  const cache = new Map(), counts = new Map();
+  return input.map(row => {
+    const r = {...row}; delete r.sourceSuppressed;
+    if (r.src === 'file' || r.added || r.placeholder || r.mid == null || !/\([^()]*\d+\s*점[^()]*\)/.test(r.line || '') || /^violated curfew regulation$/i.test(r.art || '')) return r;
+    const key = JSON.stringify([r.post, r.user, r.lineNo, r.line, r.art]);
+    if (!cache.has(key)) {
+      const mentions = parsePost(C, {id:r.post, user:r.user, title:'', date:r.date || C.baseDate, text:r.line});
+      for (const m of mentions) if (!m.art) m.art = r.art;
+      cache.set(key, mentions);
+    }
+    const m = cache.get(key).find(m => m.tok === (r.tok || r.name));
+    if (!m) return r;
+    const expected = mentionsToRows(C, [m]).rows;
+    const mk = JSON.stringify([r.post, r.mid]);
+    const index = counts.get(mk) || 0; counts.set(mk, index + 1);
+    const edited = new Set(r.edited || []);
+    if (index >= expected.length && !edited.size && !r.keepDuplicate) r.sourceSuppressed = true;
+    if (!edited.has('pts') && !edited.has('art') && expected.length) {
+      r.pts = expected[0].pts;
+      r.flags = (r.flags || []).filter(f => f[0] !== 'pts').concat(expected[0].flags.filter(f => f[0] === 'pts'));
+    }
+    return r;
+  });
 }
 export function applySourceRules(C, row) {
   const r = {...row, flags: (row.flags || []).map(f => f.slice())};
@@ -549,7 +583,8 @@ export function compute(C, rowsIn) {
   rows.forEach((r, i) => { r._i = (typeof r.seq === 'number') ? r.seq : i; });
   const ordered = rows.slice().sort((a, b) => (a.order || 0) - (b.order || 0) || a._i - b._i || 0);
   for (const r of ordered) {
-    r.status = r.placeholder ? 'placeholder' : r.deleted ? 'deleted' : r.excluded ? 'excluded' : (!r.art ? 'unassigned' : 'ok'); r.note = '';
+    r.status = r.placeholder ? 'placeholder' : r.deleted ? 'deleted' : (r.excluded || r.sourceSuppressed) ? 'excluded' : (!r.art ? 'unassigned' : 'ok');
+    r.note = r.sourceSuppressed ? '괄호 점수 해석 오류로 생성된 추가 행 · 자동 제외' : '';
   }
   const live = ordered.filter(r => r.status === 'ok');
   // 중복
