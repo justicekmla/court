@@ -41,6 +41,10 @@ export function words(s) {
 }
 const allHangul = s => s.length > 0 && [...s].every(isHangul);
 export const isPureHangul24 = w => w.length >= 2 && w.length <= 4 && allHangul(w);
+export function canonicalName(name, C) {
+  const core = baseName(name);
+  return (C?.nameAliases?.get(core) || core) + name.slice(core.length);
+}
 export function isNameShape(w) {
   const n = w.length; if (n < 2) return false;
   const last = w[n - 1]; let core = w;
@@ -150,12 +154,24 @@ export function cellText(v) { if (v === null || v === undefined) return ''; let 
 // refs = {roster:[{name,grade}], articles:[{art,pts,dflt,flag}], dict:[{kw,art,fixed,poster}], nameFix:[{from,to}], reps:[..], nonNames:[..]}
 export function makeCtx(refs, sunday) {
   const C = { baseDate: sunday, rosterFull: new Map(), rosterBase: new Map(), artPoints: new Map(), artDefault: new Map(), artFlag: new Map(),
-    dict: [], nameFix: new Map(), reps: new Set(), nonNames: new Set(), articleList: [] };
+    dict: [], nameFix: new Map(), nameAliases: new Map(), reps: new Set(), nonNames: new Set(), articleList: [] };
   for (const r of refs.roster || []) {
     let n = cellText(r.name); if (!n) continue; n = normSuffix(n);
     const g = Number(r.grade); C.rosterFull.set(n, Number.isFinite(g) && String(r.grade).trim() !== '' ? Math.trunc(g) : 0);
     const b = baseName(n); if (!C.rosterBase.has(b)) C.rosterBase.set(b, []); C.rosterBase.get(b).push(n);
   }
+  // Resolve shortened forms of long roster names only when unambiguous.
+  // Actual student identities stay exclusively in the private roster data.
+  const aliases = new Map();
+  for (const full of C.rosterBase.keys()) {
+    if (full.length < 5 || !allHangul(full)) continue;
+    for (const alias of [full.slice(0,-1), full[0]+full.slice(-2)]) {
+      if (C.rosterBase.has(alias)) continue;
+      if (!aliases.has(alias)) aliases.set(alias,new Set());
+      aliases.get(alias).add(full);
+    }
+  }
+  for (const [alias, targets] of aliases) if (targets.size===1) C.nameAliases.set(alias,[...targets][0]);
   for (const a of refs.articles || []) {
     const n = cellText(a.art); if (!n) continue;
     let v = a.pts; if (typeof v === 'string' && v.trim() !== '' && !isNaN(Number(v))) v = Number(v);
@@ -168,14 +184,15 @@ export function makeCtx(refs, sunday) {
     const f = cellText(d.fixed);
     C.dict.push({ kw: cellText(d.kw), art: cellText(d.art), fixed: f === '' ? undefined : Math.trunc(Number(f)), poster: cellText(d.poster) });
   }
-  for (const f of refs.nameFix || []) if (cellText(f.from)) C.nameFix.set(cellText(f.from), cellText(f.to));
+  for (const f of refs.nameFix || []) if (cellText(f.from)) C.nameFix.set(cellText(f.from), canonicalName(cellText(f.to), C));
   for (const r of refs.reps || []) if (cellText(r)) C.reps.add(baseName(cellText(r)));
   for (const w of refs.nonNames || []) if (cellText(w)) C.nonNames.add(cellText(w));
   return C;
 }
-const gradeOf = (C, n) => C.rosterFull.get(n);
-export function isKnown(C, tok) { return C.rosterFull.has(normSuffix(tok)) || C.rosterBase.has(tok) || C.rosterBase.has(baseName(tok)); }
+const gradeOf = (C, n) => C.rosterFull.get(canonicalName(n, C));
+export function isKnown(C, tok) { tok=canonicalName(C.nameFix.get(tok) || tok, C); return C.rosterFull.has(normSuffix(tok)) || C.rosterBase.has(tok) || C.rosterBase.has(baseName(tok)); }
 export function lookup(C, tok, hint) {
+  tok = canonicalName(C.nameFix.get(tok) || tok, C);
   let t = normSuffix(tok);
   if (!C.rosterFull.has(t) && /\d\d$/.test(tok) && C.rosterBase.has(baseName(tok))) {
     hint = gisuToGrade(parseInt(tok.slice(-2), 10), C.baseDate); tok = baseName(tok); t = tok;
@@ -190,6 +207,7 @@ export function lookup(C, tok, hint) {
 }
 function suggest(C, tok) { const c = []; for (const [b, list] of C.rosterBase) if (diffOne(b, tok)) c.push(...list); return c; }
 export function displayName(C, n) {
+  n = canonicalName(n, C);
   const b = baseName(n);
   if (n === b && C.rosterBase.has(b) && C.rosterBase.get(b).length > 1) return n + gradeToGisu(gradeOf(C, n), C.baseDate);
   return n;
@@ -264,14 +282,21 @@ export function toDate(v, refDate) {
 function grabParens(C, s, per, poster) {
   let out = '', pos = 1, a = inStr(1, s, '(');
   while (a > 0) {
-    const b = inStr(a + 1, s, ')'); if (b === 0) break;
+    let b = inStr(a + 1, s, ')'); if (b === 0) break;
     let i = a - 1; while (i >= 1 && isSpace(at(s, i))) i--;
     const wEnd = i; while (i >= 1 && isWordCh(at(s, i))) i--;
     const wStart = i + 1;
     if (wEnd >= wStart && wStart >= pos) {
       const w = mid(s, wStart, wEnd - wStart + 1), inner = mid(s, a + 1, b - a - 1);
-      if (isNameShape(w) && !isNonName(C, w) && findArticle(C, w, poster).art === '' && (isKnown(C, w) || isPureHangul24(w))) {
+      if ((isNameShape(w) || isKnown(C, w)) && !isNonName(C, w) && findArticle(C, w, poster).art === '' && (isKnown(C, w) || isPureHangul24(w))) {
         if (!per.has(w)) per.set(w, []); per.get(w).push(inner);
+        // Consecutive annotations belong to the same student, including spaces.
+        let next = b + 1; while (isSpace(at(s, next))) next++;
+        while (at(s, next) === '(') {
+          const end = inStr(next + 1, s, ')'); if (!end) break;
+          per.get(w).push(mid(s, next + 1, end - next - 1)); b = end;
+          next = b + 1; while (isSpace(at(s, next))) next++;
+        }
         out += mid(s, pos, wEnd - pos + 1); pos = b + 1;
       }
     }
@@ -316,7 +341,7 @@ export function parsePost(C, p) {
     let clean = removeSpans(noParen, ds);
     if (kw) clean = clean.replace(new RegExp(kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), ' ');
     const cands = []; let known = 0;
-    for (const [w] of words(clean)) if (isNameShape(w)) { cands.push(w); if (isKnown(C, w)) known++; }
+    for (const [w] of words(clean)) if (isNameShape(w) || isKnown(C, w)) { cands.push(w); if (isKnown(C, w)) known++; }
     const isList = known > 0 && known >= 0.5 * cands.length;
     const names = cands.filter(t => isKnown(C, t) || (isList && isPureHangul24(t) && !isNonName(C, t)));
     const lineWd = ln.includes('취하');
@@ -354,7 +379,7 @@ export function parsePost(C, p) {
 }
 
 // ---------------------------------------------------------------- 글 고르기 (주 / 수정 / 최종)
-function namesOf(C, text) { const s = new Set(); for (const [w] of words(text)) if (isNameShape(w) && isKnown(C, w)) s.add(w); return s; }
+function namesOf(C, text) { const s = new Set(); for (const [w] of words(text)) if (isKnown(C, w)) s.add(canonicalName(C.nameFix.get(w) || w, C)); return s; }
 // posts: [{id,date,...}] 반환: [{...post, inWeek, mark:'포함'|'제외', markNote}]
 export function markPosts(C, posts, monday, sunday) {
   const out = posts.map(p => ({ ...p, inWeek: !!p.date && p.date >= monday && p.date <= sunday && cellText(p.text) !== '' }));
@@ -433,7 +458,7 @@ export function mentionsToRows(C, mentions, midStart = 0) {
       } else {
         pts = Math.trunc(Number(base));
         if (stated !== undefined && stated !== pts && pts !== 0) {
-          if (stated % pts === 0 && m.src !== 'file') mult = mult * Math.floor(stated / pts);
+          if (m.ptsOv === undefined && stated % pts === 0 && m.src !== 'file') mult = mult * Math.floor(stated / pts);
           else pts = stated;
         }
       }
@@ -509,7 +534,21 @@ function curfewPoints(line, name) {
 }
 // Recover parenthesized defendants omitted by the old parser without rewriting data.
 export function expandSourceRows(C, input) {
-  const rows = input.slice();
+  const rows = repairPersonalPoints(C, input);
+  // Restore known long names omitted by the old length filter.
+  // A retained (even deleted or edited) row prevents recreation on later renders.
+  for (const p of C.sourcePosts || []) {
+    const siblings = rows.filter(r => String(r.post) === String(p.id) && !r.added && r.src !== 'file');
+    if (!siblings.length) continue;
+    const mentions = parsePost(C, p).filter(m => canonicalName(baseName(m.tok), C).length > 4 && isKnown(C, m.tok));
+    for (let i=0; i<mentions.length; i++) {
+      const m=mentions[i];
+      if (rows.some(r => String(r.post)===String(p.id) && r.group===m.group && canonicalName(baseName(r.tok || r.name), C)===canonicalName(baseName(m.tok), C))) continue;
+      const id='alias-'+p.id+'-'+m.lineNo+'-'+i;
+      const recovered=mentionsToRows(C,[m]).rows;
+      recovered.forEach((r,k)=>rows.push({...r,id:id+'-'+k,mid:id,order:siblings[0].order || 0,seq:(siblings[0].seq || 0)+0.001*(i+k+1),excluded:!!siblings[0].excluded,recoveredFromAlias:true}));
+    }
+  }
   for (const r of input) {
     if (r.src === 'file' || r.added || r.placeholder || groupOf(r.user) !== '남사감' || !/^violated curfew regulation$/i.test(r.art || '')) continue;
     for (const match of normalize(r.line || '').matchAll(/\(([^()]*)\)/g)) {
@@ -525,8 +564,36 @@ export function expandSourceRows(C, input) {
   }
   return rows;
 }
+// Re-evaluate old generated rows on copies. Keep their IDs and all manual edits;
+// surplus automatic rows stay in the draft, visibly excluded from the result.
+function repairPersonalPoints(C, input) {
+  const cache = new Map(), counts = new Map();
+  return input.map(row => {
+    const r = {...row}; delete r.sourceSuppressed;
+    if (r.src === 'file' || r.added || r.placeholder || r.mid == null || !/\([^()]*\d+\s*점[^()]*\)/.test(r.line || '') || /^violated curfew regulation$/i.test(r.art || '')) return r;
+    const key = JSON.stringify([r.post, r.user, r.lineNo, r.line, r.art]);
+    if (!cache.has(key)) {
+      const mentions = parsePost(C, {id:r.post, user:r.user, title:'', date:r.date || C.baseDate, text:r.line});
+      for (const m of mentions) if (!m.art) m.art = r.art;
+      cache.set(key, mentions);
+    }
+    const m = cache.get(key).find(m => m.tok === (r.tok || r.name));
+    if (!m) return r;
+    const expected = mentionsToRows(C, [m]).rows;
+    const mk = JSON.stringify([r.post, r.mid]);
+    const index = counts.get(mk) || 0; counts.set(mk, index + 1);
+    const edited = new Set(r.edited || []);
+    if (index >= expected.length && !edited.size && !r.keepDuplicate) r.sourceSuppressed = true;
+    if (!edited.has('pts') && !edited.has('art') && expected.length) {
+      r.pts = expected[0].pts;
+      r.flags = (r.flags || []).filter(f => f[0] !== 'pts').concat(expected[0].flags.filter(f => f[0] === 'pts'));
+    }
+    return r;
+  });
+}
 export function applySourceRules(C, row) {
   const r = {...row, flags: (row.flags || []).map(f => f.slice())};
+  r.name = canonicalName(r.name || '', C);
   const edited = new Set(r.edited || []);
   if (r.src === 'file' || r.added || r.placeholder) return r;
   const male = groupOf(r.user) === '남사감';
@@ -549,7 +616,8 @@ export function compute(C, rowsIn) {
   rows.forEach((r, i) => { r._i = (typeof r.seq === 'number') ? r.seq : i; });
   const ordered = rows.slice().sort((a, b) => (a.order || 0) - (b.order || 0) || a._i - b._i || 0);
   for (const r of ordered) {
-    r.status = r.placeholder ? 'placeholder' : r.deleted ? 'deleted' : r.excluded ? 'excluded' : (!r.art ? 'unassigned' : 'ok'); r.note = '';
+    r.status = r.placeholder ? 'placeholder' : r.deleted ? 'deleted' : (r.excluded || r.sourceSuppressed) ? 'excluded' : (!r.art ? 'unassigned' : 'ok');
+    r.note = r.sourceSuppressed ? '괄호 점수 해석 오류로 생성된 추가 행 · 자동 제외' : '';
   }
   const live = ordered.filter(r => r.status === 'ok');
   // 중복
