@@ -2,7 +2,7 @@ import * as CM from './court-meta.js?v=titles-20261108-4';
 import * as Roster from './roster.js?v=semester-20261107-1';
 import {verifyChiefPassword,parseChiefSetup,validChiefVerifier} from './chief-auth.js?v=semester-20261107-1';
 import { sourceStamp, rowsForGroup, combinedRows, currentStamps as stampsForGroups, reviewSnapshotMatches } from './review.js?v=20261107-1';
-import * as E from './engine.js?v=points-names-20261110-2';
+import * as E from './engine.js?v=point-counts-20261110-3';
 import * as M from './manual.js?v=articles-20261108-2';
 import { createVersion2 } from './version2.js?v=titles-20261108-4';
 import * as IO from './io.js?v=titles-20261108-4';
@@ -366,7 +366,7 @@ function viewExtras() {
     (live.length ? '<div class="tablewrap"><table class="grid"><thead><tr><th>이름</th><th>학년</th><th>날짜</th><th>기소자</th><th>기소 항목</th><th>점수</th><th>출처</th><th></th></tr></thead><tbody>' + tr + '</tbody></table></div>' : '<p class="muted">아직 없습니다. 추가 기소가 없으면 바로 [추가 기소 반영 완료]를 누르세요.</p>') + '</div>';
 }
 // ---------------------------------------------------------------- 5) 법정리스트
-function listResult() { const rows = finalRows().concat(extrasRows()); return computeFor(rows); }
+function listResult() { const rows = finalRows().concat(extrasRows()); return E.compute({...ctx(),restoreMissingNames:true}, rows); }
 function viewList() {
   const res = listResult(); const list = res.list;
   const info=outputInfo(); const h=info.header;

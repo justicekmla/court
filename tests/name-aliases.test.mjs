@@ -10,14 +10,14 @@ test('all requested aliases resolve to the full canonical output against the ful
   const C=context(),p=post('청소 불량 - '+alias+'(2점)');
   assert(E.isKnown(C,alias));assert.deepEqual(E.lookup(C,alias,0),[full]);
   const res=E.compute(C,E.extractWeek(C,[p],'2026-11-02','2026-11-08').rows);
-  assert.equal(res.list.length,1);assert.equal(res.list[0].disp,full);assert.equal(res.list[0].pts,2);assert.equal(res.list[0].grade,1);
+  assert.equal(res.list.length,2);assert(res.list.every(r=>r.disp===full && r.pts===1));assert.equal(res.list[0].grade,1);
  }
 });
 test('known long names and long correction keys pass recognition without accepting unknown prose',()=>{
  const C=E.makeCtx({roster:[{name:'가나다라마',grade:1}],nameFix:[{from:'가나다라마바',to:'가나다라마'}],articles:[{art:'Cleaning',pts:1}],dict:[{kw:'청소 불량',art:'Cleaning'}]},'2026-11-08');
  for(const name of ['가나다라마','가나다라마바']){
   const rows=E.mentionsToRows(C,E.parsePost(C,post('청소 불량 - '+name+'(2점)'))).rows;
-  assert.equal(rows.length,1);assert.equal(rows[0].name,'가나다라마');assert.equal(rows[0].pts,2);
+  assert.equal(rows.length,2);assert.equal(rows[0].name,'가나다라마');assert.equal(rows[0].pts,1);
  }
  assert.equal(E.parsePost(C,post('청소 불량 - 이것은안내문입니다')).length,0);
 });
@@ -38,10 +38,20 @@ test('old omitted full name is restored from saved original posts without resett
  C.sourcePosts=[p];
  const old={id:'old',mid:1,post:'9',group:'9|1',name:'가상학생',tok:'가상학생',user:'김대기',art:'Cleaning',date:'2026-11-06',pts:1,flags:[],edited:[],line:'청소 불량 - 가상학생, '+full+'(1학년)(2점)',lineNo:2};
  const rows=E.expandSourceRows(C,[old]),restored=rows.find(r=>r.name===full);
- assert(restored);assert.equal(restored.pts,2);assert.equal(rows[0].id,'old');
- assert.equal(E.expandSourceRows(C,rows).length,2);
- restored.deleted=true;assert(!E.compute(C,rows).list.some(r=>r.name===full));
+ assert(restored);assert.equal(restored.pts,1);assert.equal(rows[0].id,'old');
+ assert.equal(E.expandSourceRows(C,rows).length,3);
+ for(const r of rows.filter(r=>r.name===full))r.deleted=true;assert(!E.compute(C,rows).list.some(r=>r.name===full));
  restored.deleted=false;restored.pts=7;restored.edited=['pts'];
  assert.equal(E.compute(C,rows).list.find(r=>r.name===full).pts,7);
  assert.equal(E.expandSourceRows(C,[]).length,0);
+});
+test('version1 restoration reads saved posts even when their rows are completely absent',()=>{
+ const C={...context(),restoreMissingNames:true};
+ C.sourcePosts=[post('청소 불량 - '+aliases[2]+'(3점)')];
+ const res=E.compute(C,[]);
+ assert.equal(res.list.length,3);assert(res.list.every(r=>r.disp===full && r.pts===1));
+ assert.equal(E.compute(C,res.rows).list.length,3);
+ C.sourcePosts[0].mark='제외';assert.equal(E.compute(C,[]).list.length,0);
+ C.sourcePosts[0].mark='포함';C.sourcePosts[0].date='2026-10-20';
+ assert.equal(E.compute(C,[]).list.length,0);
 });

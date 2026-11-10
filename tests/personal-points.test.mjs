@@ -7,17 +7,17 @@ const refs={roster:names.map(name=>({name,grade:1})),articles:[{art:'Cleaning',p
 const ctx=()=>E.makeCtx(refs,'2026-11-08');
 const line='청소 불량 - 가상학생, 시험학생(2점), 예시학생(1학년)(2점), 연습학생, 검증학생(3점)';
 function parse(text){const C=ctx();return E.mentionsToRows(C,E.parsePost(C,{id:'1',date:'2026-11-06',user:'김대기',title:'생활지도',text:'11월 6일\n'+text})).rows.map((r,i)=>({...r,id:'r'+i,seq:i}));}
-const expected=[['가상학생',1],['시험학생',2],['예시학생',2],['연습학생',1],['검증학생',3]];
-test('consecutive personal annotations never become whole-line points or repetition counts',()=>{
+const expected=[['가상학생',1],['시험학생',1],['시험학생',1],['예시학생',1],['예시학생',1],['연습학생',1],['검증학생',1],['검증학생',1],['검증학생',1]];
+test('consecutive personal annotations apply occurrence counts only to the annotated student',()=>{
  for(const text of [line,line.replace('(1학년)(2점)','(1학년) (2점)'),line.replace('(1학년)(2점)','(1학년, 2점)')]){
   assert.deepEqual(parse(text).map(r=>[r.name,r.pts]),expected);
-  assert.equal(E.compute(ctx(),parse(text)).list.length,5);
+  assert.equal(E.compute(ctx(),parse(text)).list.length,9);
  }
 });
 test('explicit occurrences stay separate from personal points',()=>{
  const rows=parse('청소 불량 - 가상학생, 예시학생(1학년)(2점)(2회), 검증학생(3점)');
- assert.deepEqual(rows.map(r=>[r.name,r.pts]),[['가상학생',1],['예시학생',2],['예시학생',2],['검증학생',3]]);
- assert.equal(E.compute(ctx(),rows).list.length,4);
+ assert.deepEqual(rows.map(r=>[r.name,r.pts]),[['가상학생',1],...Array.from({length:4},()=>['예시학생',1]),...Array.from({length:3},()=>['검증학생',1])]);
+ assert.equal(E.compute(ctx(),rows).list.length,8);
 });
 function legacy(){return names.flatMap((name,mid)=>Array.from({length:name==='검증학생'?3:2},(_,k)=>({id:mid+'-'+k,mid:mid+1,seq:mid*3+k,post:'1',group:'1|1',user:'김대기',name,tok:name,date:'2026-11-06',art:'Cleaning',pts:1,line,lineNo:2,flags:[],edited:[]})));}
 test('already saved rows are corrected on copies with stable IDs and no reset',()=>{
@@ -25,7 +25,7 @@ test('already saved rows are corrected on copies with stable IDs and no reset',(
  assert.deepEqual(rows,before);
  assert.deepEqual(res.list.map(r=>[r.name,r.pts]).sort(),expected.slice().sort());
  assert.equal(res.rows.length,rows.length);
- assert.equal(res.rows.filter(r=>r.sourceSuppressed).length,6);
+ assert.equal(res.rows.filter(r=>r.sourceSuppressed).length,2);
  assert(res.rows.filter(r=>r.sourceSuppressed).every(r=>r.status==='excluded'));
  assert.deepEqual(E.compute(ctx(),E.expandSourceRows(ctx(),rows)).list,res.list);
  assert.deepEqual(res.rows.map(r=>r.id),rows.map(r=>r.id));
@@ -53,4 +53,21 @@ test('newly parsed and saved corrected rows remain stable through repeated compu
  assert.deepEqual(expanded.map(r=>[r.name,r.pts]),expected);
  assert(!expanded.some(r=>r.sourceSuppressed));
  assert.deepEqual(E.expandSourceRows(ctx(),expanded),expanded);
+});
+test('male and female cleaning totals both expand to one-point occurrences',()=>{
+ for(const user of ['김대기','박주영']){
+  const C=ctx(),mentions=E.parsePost(C,{id:'4',date:'2026-11-06',user,title:'지도',text:'11월 6일\n청소 불량 - 가상학생(3점), 시험학생'});
+  const rows=E.mentionsToRows(C,mentions).rows;
+  assert.deepEqual(rows.map(r=>[r.name,r.pts]),[['가상학생',1],['가상학생',1],['가상학생',1],['시험학생',1]]);
+ }
+});
+test('previous scalar automatic rows expand without changing saved edits or resurrecting deletion',()=>{
+ const row={...legacy()[0],id:'scalar',name:'검증학생',tok:'검증학생',pts:3};
+ const before=structuredClone(row),expanded=E.expandSourceRows(ctx(),[row]);
+ assert.equal(expanded.length,3);assert(expanded.every(r=>r.pts===1));
+ assert.equal(expanded[0].id,'scalar');assert.deepEqual(row,before);
+ assert.deepEqual(E.expandSourceRows(ctx(),expanded),expanded);
+ assert.equal(E.compute(ctx(),[{...row,deleted:true}]).list.length,0);
+ const manual={...row,pts:7,edited:['pts']};
+ const kept=E.expandSourceRows(ctx(),[manual]);assert.equal(kept.length,1);assert.equal(kept[0].pts,7);
 });
