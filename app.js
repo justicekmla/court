@@ -2,7 +2,7 @@ import * as CM from './court-meta.js?v=titles-20261108-4';
 import * as Roster from './roster.js?v=semester-20261107-1';
 import {verifyChiefPassword,parseChiefSetup,validChiefVerifier} from './chief-auth.js?v=semester-20261107-1';
 import { sourceStamp, rowsForGroup, combinedRows, currentStamps as stampsForGroups, reviewSnapshotMatches } from './review.js?v=20261107-1';
-import * as E from './engine.js?v=points-20261110-1';
+import * as E from './engine.js?v=points-names-20261110-2';
 import * as M from './manual.js?v=articles-20261108-2';
 import { createVersion2 } from './version2.js?v=titles-20261108-4';
 import * as IO from './io.js?v=titles-20261108-4';
@@ -56,6 +56,7 @@ let ctxCache = { key: '', C: null };
 function ctx() {
   const key = (st().courtMeta?.courtDate || '') + '|' + (S.docs.refs ? S.docs.refs.updatedAt || 'x' : '') + '|' + sundayOf();
   if (ctxCache.key !== key) ctxCache = { key, C: Object.assign(E.makeCtx(S.docs.refs || {}, sundayOf()), {femaleDefaultDate: st().courtMeta?.courtDate || sundayOf()}) };
+  ctxCache.C.sourcePosts = S.docs.posts?.posts || [];
   return ctxCache.C;
 }
 const gdoc = g => S.docs['g_' + GKEY[g]];
