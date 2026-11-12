@@ -31,3 +31,38 @@ test('grade controls stay hidden and inactive in the final-defense picker',()=>{
  s.run("showModal('abs')");assert.equal(s.get('gradeButtons').hidden,false);
  s.click(3);assert.deepEqual(s.json('[...absent]'),[]);
 });
+function toggleItem(s,person,item,checked=true){s.get('list').onchange({target:{dataset:{person:String(person),item:String(item)},checked}})}
+test('withdrawal removes only the selected charge, recalculates totals, and can be undone',()=>{
+ const s=setup();s.run("showModal('wd')");toggleItem(s,2,21);
+ let r=s.json('makeResult()'),rows=r.seat.filter(x=>x[5]);
+ assert.equal(r.withdrawnCount,1);assert.equal(rows.length,3);
+ assert.equal(rows.find(x=>x[2]==='시험학생')[7],3);
+ assert.equal(rows.some(x=>x[5]==='B'),false);
+ assert.equal(s.get('download').attrs['aria-disabled'],'true');
+ assert(s.get('list').innerHTML.includes('· 취하'));
+ toggleItem(s,2,21,false);r=s.json('makeResult()');
+ assert.equal(r.withdrawnCount,0);assert.equal(r.seat.find(x=>x[2]==='시험학생')[7],5);
+ assert.equal(s.run('people[1].items.length'),2);
+});
+test('withdrawal excludes absent charges and omits students with every charge withdrawn',()=>{
+ const s=setup();s.run("absent.add(2);showModal('wd')");toggleItem(s,2,21);
+ let r=s.json('makeResult()');assert.equal(r.absCount,1);assert.equal(r.abs.length,1);assert.equal(r.abs[0][5],'C');assert.equal(r.abs[0][7],3);
+ toggleItem(s,2,22);r=s.json('makeResult()');assert.equal(r.absCount,0);assert.equal(r.abs.length,0);assert.equal(r.withdrawnCount,2);
+ toggleItem(s,2,21,false);r=s.json('makeResult()');assert.equal(r.absCount,1);assert.equal(r.abs[0][5],'B');
+});
+test('withdrawal overrides final defense without losing its selection when restored',()=>{
+ const s=setup();s.run("defense.set(2,new Set([21]));showModal('wd')");toggleItem(s,2,21);
+ let r=s.json('makeResult()');assert.equal(r.finals,0);assert.equal(r.normals,3);
+ s.run("showModal('def')");assert.match(s.get('list').innerHTML,/data-item="21" checked disabled/);
+ toggleItem(s,2,21);assert.equal(s.run('withdrawn.get(2).has(21)'),true);
+ s.run("showModal('wd')");toggleItem(s,2,21,false);r=s.json('makeResult()');assert.equal(r.finals,1);
+});
+test('same-name and repeated identical charges are withdrawn individually and exports exclude them',async()=>{
+ const s=setup();s.run("people=[{id:1,name:'동명',grade:'1',items:[{id:11,art:'반복',point:1},{id:12,art:'반복',point:1}]},{id:2,name:'동명',grade:'1',items:[{id:21,art:'반복',point:1}]}];showModal('wd')");
+ toggleItem(s,1,11);const r=s.json('makeResult()');
+ assert.equal(r.seat.filter(x=>x[5]==='반복').length,2);assert.equal(r.groups,1);
+ const template=await fs.readFile(new URL('../seats/template.js',import.meta.url),'utf8');s.run(template);
+ s.run("people[0].items[0].art='취하된항목';result=makeResult()");
+ const xml=s.run('sheetXml(result.seat)');assert.equal(xml.includes('취하된항목'),false);assert(xml.includes('반복'));
+ assert.equal(s.get('gradeButtons').hidden,true);
+});
