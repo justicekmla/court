@@ -1,0 +1,12 @@
+const H = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+export function directoryPanel(refs,{council=false,draft=null,saving=false}={}) {
+ const roster=refs.roster||[], reps=draft||refs.reps||[];
+ const rows=council?reps.map(name=>roster.find(r=>r.name===name)||{name,grade:'',no:''}):roster;
+ const table=rows.map((r,i)=>`<tr data-directory-row data-search="${H([r.name,r.grade,r.no].join(' ').toLowerCase())}"><td>${H(r.name)}</td><td>${H(r.grade)}</td><td>${H(r.no)}</td>${council&&draft?`<td><button class="danger ghost small" data-act="councilRemove" data-index="${i}" ${saving?'disabled':''}>제외</button></td>`:''}</tr>`).join('');
+ return `<section class="panel"><div class="head-row"><h2>${council?'학생회 명단':'재학생 명단'} · ${rows.length}명</h2><span class="grow"></span><button class="ghost" data-act="directoryClose" ${saving?'disabled':''}>돌아가기</button></div>${council?'<p class="muted">학생대표 추가 벌점 대상 명단입니다. 저장하면 이후 계산에 반영됩니다.</p>':''}<div class="row-inline"><label>이름·학년·학번 검색 <input id="directory-search" type="search" data-keep="directory-search" placeholder="이름 또는 학년·학번"></label>${council&&!draft?'<button class="primary" data-act="councilEdit">학생회 명단 수정</button>':''}</div>${council&&draft?`<div class="row-inline"><label>추가할 재학생 <select id="council-person" data-keep="council-person"><option value="">학생을 선택하세요</option>${roster.filter(r=>!reps.includes(r.name)).map(r=>`<option value="${H(r.name)}">${H(r.name)} (${H(r.grade)}학년${r.no?' · '+H(r.no):''})</option>`).join('')}</select></label><button class="outline" data-act="councilAdd" ${saving?'disabled':''}>학생회에 추가</button></div>`:''}<p class="muted small" id="directory-count" role="status">${rows.length}명 표시</p><div class="tablewrap roster-preview"><table class="grid"><thead><tr><th>이름</th><th>학년</th><th>학번</th>${council&&draft?'<th>수정</th>':''}</tr></thead><tbody>${table}</tbody></table></div>${rows.length?'':'<p class="muted">등록된 명단이 없습니다.</p>'}${council&&draft?`<div class="foot-row"><button class="ghost" data-act="councilCancel" ${saving?'disabled':''}>수정 취소</button><button class="primary" data-act="councilSave" ${saving?'disabled':''}>학생회 명단 저장</button></div>`:''}</section>`;
+}
+export function filterDirectory(root,query='') {
+ const q=query.trim().toLowerCase();let count=0;
+ for(const row of root.querySelectorAll('[data-directory-row]')) {row.hidden=!row.dataset.search.includes(q);if(!row.hidden)count++;}
+ const label=root.querySelector('#directory-count');if(label)label.textContent=count+'명 표시';
+}
