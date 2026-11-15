@@ -440,7 +440,7 @@ function viewMember() {
   if (!refsReady()) return '<div class="center-box"><h2>아직 정리된 글이 없습니다</h2><p class="muted">법무부장이 인트라넷 글을 붙여넣고 정리하면 여기에 나타납니다. 이 화면은 자동으로 바뀝니다.</p></div>';
   if (!S.group) return '<div class="center-box"><h2>담당을 고르세요</h2><div class="grid4">' + E.GROUPS.map(g => {
     const d = gdoc(g) || {};
-    return '<button class="primary huge g" data-act="pick" data-g="' + g + '">' + g + '<small>' + GDESC[g] + (d.done ? ' · 완료' : d.draft ? ' · 수정 중' : '') + '</small></button>';
+    return '<button class="primary huge g" data-act="pick" data-g="' + g + '">' + g + (d.done ? '<small>완료</small>' : d.draft ? '<small>수정 중</small>' : '') + '</button>';
   }).join('') + '</div><p class="muted small">' + weekLine() + '</p></div>';
   const d = gdoc(S.group);
   if (!d) return '<div class="center-box"><h2>' + H(S.group) + ' 업로드 대기</h2><p>법무부장이 이 업무 자료를 정리하면 자동으로 표시됩니다.</p><button class="ghost" data-act="role" data-role="member">담당 다시 고르기</button></div>';
