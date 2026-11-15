@@ -548,7 +548,7 @@ export function expandSourceRows(C, input) {
       const id='alias-'+p.id+'-'+m.lineNo+'-'+i;
       const recovered=mentionsToRows(C,[m]).rows;
       const base=siblings[0] || {};
-      recovered.forEach((r,k)=>rows.push({...r,id:id+'-'+k,mid:id,order:base.order || 0,seq:(base.seq || 0)+0.001*(i+k+1),excluded:siblings.length ? !!base.excluded : p.mark==='제외',recoveredFromAlias:true}));
+      recovered.forEach((r,k)=>rows.push({...r,...((base.uploadGroup || p.uploadGroup) ? {uploadGroup:base.uploadGroup || p.uploadGroup} : {}),id:id+'-'+k,mid:id,order:base.order || 0,seq:(base.seq || 0)+0.001*(i+k+1),excluded:siblings.length ? !!base.excluded : p.mark==='제외',recoveredFromAlias:true}));
     }
   }
   for (const r of input) {

@@ -2,8 +2,8 @@ import {directoryPanel,filterDirectory} from './directory.js?v=20261114-1';
 import * as CM from './court-meta.js?v=titles-20261108-4';
 import * as Roster from './roster.js?v=semester-20261107-1';
 import {verifyChiefPassword,parseChiefSetup,validChiefVerifier} from './chief-auth.js?v=semester-20261107-1';
-import { sourceStamp, rowsForGroup, combinedRows, currentStamps as stampsForGroups, reviewSnapshotMatches } from './review.js?v=20261107-1';
-import * as E from './engine.js?v=point-counts-20261110-3';
+import { sourceStamp, rowsForGroup, combinedRows, currentStamps as stampsForGroups, reviewSnapshotMatches } from './review.js?v=upload-groups-20261115-1';
+import * as E from './engine.js?v=upload-groups-20261115-1';
 import * as M from './manual.js?v=articles-20261108-2';
 import { createVersion2 } from './version2.js?v=titles-20261108-4';
 import * as IO from './io.js?v=titles-20261108-4';
@@ -14,7 +14,7 @@ const app = document.getElementById('app');
 const H = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 const UPLOAD_GROUPS = ['여사감', '남사감', '인트라넷', '아침기'];
 const GKEY = { '남사감': 'm', '여사감': 'f', '인트라넷': 'i', '아침기': 'a' };
-const GDESC = { '남사감': '김대기 선생님', '여사감': '박주영 선생님', '인트라넷': '그 외 모든 작성자(tr)', '아침기': '곽노재·김명순 선생님' };
+const GDESC = Object.fromEntries(UPLOAD_GROUPS.map(g => [g, '작성자 제한 없이 등록할 수 있습니다. 이 칸에 넣은 글은 ' + g + ' 업무로 전달됩니다.']));
 const FLAG_CLS = { name: 'f-name', ambig: 'f-ambig', date: 'f-date', pts: 'f-pts' };
 const LOCAL = new URLSearchParams(location.search).has('test');
 const todayIso = () => { const t = new Date(); return E.iso(t.getFullYear(), t.getMonth() + 1, t.getDate()); };
@@ -260,9 +260,6 @@ async function doOrganize(group, empty = false) {
   const sunday = document.getElementById('sunday').value || sundayOf();
   const posts = empty ? [] : E.parsePasted(input.value);
   if (!empty && !posts.length) { toast('붙여넣은 글을 읽지 못했습니다.', 5000); return; }
-  if (posts.some(p => E.groupOf(p.user) !== group)) {
-    toast('다른 업무 작성자의 글이 포함되어 있습니다. ' + group + '에 해당하는 글만 선택해 주세요.', 6000); return;
-  }
   const monday = E.addDays(sunday, -6);
   const wk = E.extractWeek(Object.assign(E.makeCtx(S.docs.refs, sunday), {femaleDefaultDate: st().courtMeta?.courtDate || sunday}), posts, monday, sunday);
   if (!empty && !wk.posts.length) { toast('해당 주의 글이 없습니다. 기준 일요일을 확인하세요.', 5000); return; }
@@ -277,11 +274,11 @@ async function doOrganize(group, empty = false) {
       if (empty && d) throw Error('이미 자료가 등록된 업무입니다.');
       const existing = previous.posts || [];
       const seen = new Set(existing.map(p => String(p.id)));
-      const added = wk.posts.filter(p => !seen.has(String(p.id)));
+      const added = wk.posts.filter(p => !seen.has(String(p.id))).map(p => ({ ...p, uploadGroup: group }));
       if (!empty && !added.length) throw Error('모두 이미 등록된 글입니다.');
       const addedIds = new Set(added.map(p => String(p.id)));
       const now = new Date().toISOString(), revision = uid();
-      const newRows = wk.rows.filter(r => addedIds.has(String(r.post))).map(r => ({ ...r, id: revision + '-' + r.id, mid: revision + '-' + r.mid }));
+      const newRows = wk.rows.filter(r => addedIds.has(String(r.post))).map(r => ({ ...r, uploadGroup: group, id: revision + '-' + r.id, mid: revision + '-' + r.mid }));
       const rows = (d && (d.draft || d.rows) || []).concat(newRows);
       tx.set(path, { ...(d || {}), rows, draft: null, done: empty, doneAt: empty ? now : null, revision, createdAt: d && d.createdAt || now, updatedAt: now });
       tx.set('cur/posts', { ...previous, posts: existing.concat(added), monday, sunday, createdAt: previous.createdAt || now });
@@ -320,7 +317,7 @@ function viewFinal() {
     E.GROUPS.filter(g=>gdoc(g)?.done).map(g=>{
       const approved=S.docs.final?.reviewed?.[GKEY[g]]===sourceStamp(gdoc(g));
       return '<section class="panel"><div class="head-row"><h3>'+g+'</h3><span class="'+(approved?'ok':'warn')+'">'+(approved?'최종 확인 완료':'부장 확인 대기')+'</span><span class="grow"></span><button class="outline" data-act="reviewOpen" data-g="'+g+'">'+(reviewOpen.has(g)?'검토 닫기':'검토 열기')+'</button></div>'+
-      (reviewOpen.has(g) ? rowsTable(rows.filter(r=>E.groupOf(r.user)===g),sm,{scope:'final'})+'<button class="primary" data-act="reviewApprove" data-g="'+g+'" '+(S.saving?'disabled':'')+'>이 업무 최종 확인</button><button class="ghost" data-act="reopen" data-g="'+g+'">부원에게 다시 열기</button>' : '')+'</section>';
+      (reviewOpen.has(g) ? rowsTable(rowsForGroup(rows,g),sm,{scope:'final'})+'<button class="primary" data-act="reviewApprove" data-g="'+g+'" '+(S.saving?'disabled':'')+'>이 업무 최종 확인</button><button class="ghost" data-act="reopen" data-g="'+g+'">부원에게 다시 열기</button>' : '')+'</section>';
     }).join('')+'</div>';
 }
 async function approveReview(group) {
@@ -452,7 +449,7 @@ function viewMember() {
   const mine = working(S.group);
   const others = E.GROUPS.filter(g => g !== S.group).flatMap(g => committed(g));
   const res = computeFor(mine.concat(others)); const sm = statusMap(res);
-  const cnt = counts(res.rows.filter(r => E.groupOf(r.user) === S.group));
+  const cnt = counts(rowsForGroup(res.rows,S.group));
   return '<div class="panel"><div class="head-row"><h2>' + H(S.group) + ' <span class="muted small">' + GDESC[S.group] + '</span></h2><span class="grow"></span>' +
     '<button class="outline" data-act="saveDraft">임시저장</button><button class="primary" data-act="memberDone">크로스체킹 완료</button></div>' +
     '<p class="muted">원문과 나란히 보며 이름·날짜·항목·점수를 고치세요. 고친 내용은 자동 저장됩니다. [임시저장] 후 저장 완료를 확인하면 나중에 다시 들어와 이어서 할 수 있습니다. [크로스체킹 완료]를 누르면 통합 정리본에 한꺼번에 반영됩니다.</p>' + summaryChips(cnt) + legend() +
