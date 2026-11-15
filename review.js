@@ -17,7 +17,7 @@ export function sourceStamp(doc) {
   for (let i=0; i<text.length; i++) { a=Math.imul(a^text.charCodeAt(i),16777619); b=Math.imul(b,33)^text.charCodeAt(i); }
   return 'v2:'+(a>>>0).toString(36)+'-'+(b>>>0).toString(36);
 }
-export const rowsForGroup = (rows, group) => rows.filter(row => groupOf(row.user) === group);
+export const rowsForGroup = (rows, group) => rows.filter(row => (GROUPS.includes(row.uploadGroup) ? row.uploadGroup : groupOf(row.user)) === group);
 export function currentStamps(groups) {
   return Object.fromEntries(GROUPS.map((g,i) => [GKEY[g],sourceStamp(groups[i])]));
 }
