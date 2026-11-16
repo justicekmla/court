@@ -215,6 +215,8 @@ export function displayName(C, n) {
 const isNonName = (C, w) => C.nonNames.has(w) || w.includes('취하') || w.includes('기소');
 export function findArticle(C, s, poster) {
   const low = s.toLowerCase();
+  if (groupOf(poster) === '남사감' && /신성\s*지각/.test(s)) return {art: C.articleList.find(a => a.toLowerCase() === 'late for morning exercise') || 'late for morning exercise', fixed: undefined, kw: '신성지각'};
+  if (groupOf(poster) === '남사감' && /신성\s*불참/.test(s)) return {art: C.articleList.find(a => a.toLowerCase() === 'absent from morning exercise') || 'absent from morning exercise', fixed: undefined, kw: '신성불참'};
   if (groupOf(poster) === '남사감' && /지각/.test(s)) return {art: C.articleList.find(a => a.toLowerCase() === 'late for school 7') || 'Late for school 7', fixed: undefined, kw: '지각'};
   if (groupOf(poster) === '남사감' && /통금\s*위반/.test(s)) return {art: C.articleList.find(a => a.toLowerCase() === 'violated curfew regulation') || 'Violated curfew regulation', fixed: 8, kw: s.match(/통금\s*위반/)[0]};
   for (const d of C.dict) {
@@ -610,7 +612,12 @@ export function applySourceRules(C, row) {
   const edited = new Set(r.edited || []);
   if (r.src === 'file' || r.added || r.placeholder) return r;
   const male = groupOf(r.user) === '남사감';
-  if (male && !edited.has('art') && /지각/.test(r.line || '') && /^late for school(?: 7)?$/i.test(r.art || '')) {
+  if (male && !edited.has('art') && /신성\s*(지각|불참)/.test(r.line || '')) {
+    const wanted = /신성\s*지각/.test(r.line) ? 'late for morning exercise' : 'absent from morning exercise';
+    r.art = C.articleList.find(a => a.toLowerCase() === wanted) || wanted;
+    if (!edited.has('pts')) { const pts = C.artPoints.get(r.art); if (typeof pts === 'number') r.pts = pts; }
+  }
+  if (male && !edited.has('art') && /지각/.test(r.line || '') && !/신성\s*지각/.test(r.line || '') && /^late for school(?: 7)?$/i.test(r.art || '')) {
     r.art = C.articleList.find(a => a.toLowerCase() === 'late for school 7') || 'Late for school 7';
     if (!edited.has('pts')) { const pts = C.artPoints.get(r.art); if (typeof pts === 'number') r.pts = pts; }
   }
