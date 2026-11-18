@@ -150,6 +150,15 @@ const titleRoot = t => vbTrim(t.replace(/\(수정\)/g, '').replace(/\(수정/g, 
 function diffOne(a, b) { if (a.length !== b.length) return false; let d = 0; for (let i = 0; i < a.length; i++) { if (a[i] !== b[i]) d++; if (d > 1) return false; } return d === 1; }
 export function cellText(v) { if (v === null || v === undefined) return ''; let s = vbTrim(String(v)); if (s[0] === '§') s = s.substring(1); return s; }
 
+export const MORNING_ABSENCE_ARTICLE = 'Violated outdoor regulation(심신수련)';
+const retiredMorningAbsence = /^absent\s+from\s+morning\s+exercise$/i;
+const morningAbsenceKeyword = /(?:평일\s*)?(?:신성(?:\s*\(아침기\))?|아침기(?:\s*\((?:평일\s*)?신성\))?)\s*불참|\babsent\s+from\s+morning\s+exercise\b|\bviolated\s+outdoor\s+regu(?:lation|altion)\s*\(\s*심신수련\s*\)/i;
+export function normalizeArticle(art) {
+  const key = normalize(art).trim();
+  return retiredMorningAbsence.test(key) || /^violated\s+outdoor\s+regu(?:lation|altion)\s*\(\s*심신수련\s*\)$/i.test(key)
+    ? MORNING_ABSENCE_ARTICLE : art;
+}
+
 // ---------------------------------------------------------------- 기준 자료
 // refs = {roster:[{name,grade}], articles:[{art,pts,dflt,flag}], dict:[{kw,art,fixed,poster}], nameFix:[{from,to}], reps:[..], nonNames:[..]}
 export function makeCtx(refs, sunday) {
@@ -173,7 +182,9 @@ export function makeCtx(refs, sunday) {
   }
   for (const [alias, targets] of aliases) if (targets.size===1) C.nameAliases.set(alias,[...targets][0]);
   for (const a of refs.articles || []) {
-    const n = cellText(a.art); if (!n) continue;
+    const raw = cellText(a.art); if (!raw || retiredMorningAbsence.test(raw.trim())) continue;
+    const n = normalizeArticle(raw);
+    if (n !== raw && C.artPoints.has(n)) continue;
     let v = a.pts; if (typeof v === 'string' && v.trim() !== '' && !isNaN(Number(v))) v = Number(v);
     if (v === null || v === undefined || v === '') v = undefined;
     C.artPoints.set(n, v); C.artDefault.set(n, a.dflt); C.artFlag.set(n, cellText(a.flag).toUpperCase() !== 'N');
@@ -181,8 +192,8 @@ export function makeCtx(refs, sunday) {
   }
   for (const d of refs.dict || []) {
     if (!cellText(d.kw)) continue;
-    const f = cellText(d.fixed);
-    C.dict.push({ kw: cellText(d.kw), art: cellText(d.art), fixed: f === '' ? undefined : Math.trunc(Number(f)), poster: cellText(d.poster) });
+    const raw = cellText(d.art), f = cellText(d.fixed);
+    C.dict.push({ kw: cellText(d.kw), art: normalizeArticle(raw), fixed: f === '' || retiredMorningAbsence.test(raw.trim()) ? undefined : Math.trunc(Number(f)), poster: cellText(d.poster) });
   }
   for (const f of refs.nameFix || []) if (cellText(f.from)) C.nameFix.set(cellText(f.from), canonicalName(cellText(f.to), C));
   for (const r of refs.reps || []) if (cellText(r)) C.reps.add(baseName(cellText(r)));
@@ -216,7 +227,8 @@ const isNonName = (C, w) => C.nonNames.has(w) || w.includes('취하') || w.inclu
 export function findArticle(C, s, poster) {
   const low = s.toLowerCase();
   if (groupOf(poster) === '남사감' && /신성\s*지각/.test(s)) return {art: C.articleList.find(a => a.toLowerCase() === 'late for morning exercise') || 'late for morning exercise', fixed: undefined, kw: '신성지각'};
-  if (groupOf(poster) === '남사감' && /신성\s*불참/.test(s)) return {art: C.articleList.find(a => a.toLowerCase() === 'absent from morning exercise') || 'absent from morning exercise', fixed: undefined, kw: '신성불참'};
+  const absence = morningAbsenceKeyword.exec(s);
+  if (absence) return {art: MORNING_ABSENCE_ARTICLE, fixed: undefined, kw: absence[0]};
   if (groupOf(poster) === '남사감' && /지각/.test(s)) return {art: C.articleList.find(a => a.toLowerCase() === 'late for school 7') || 'Late for school 7', fixed: undefined, kw: '지각'};
   if (groupOf(poster) === '남사감' && /통금\s*위반/.test(s)) return {art: C.articleList.find(a => a.toLowerCase() === 'violated curfew regulation') || 'Violated curfew regulation', fixed: 8, kw: s.match(/통금\s*위반/)[0]};
   for (const d of C.dict) {
@@ -228,7 +240,7 @@ export function findArticle(C, s, poster) {
   return { art: '', fixed: undefined, kw: '' };
 }
 export function resolveArticle(C, raw, poster) {
-  raw = vbTrim(raw);
+  raw = normalizeArticle(vbTrim(raw));
   for (const k of C.artPoints.keys()) if (k.toLowerCase() === raw.toLowerCase()) return k;
   const a = findArticle(C, raw, poster).art;
   return a || raw;
@@ -323,7 +335,8 @@ export function parsePost(C, p) {
   const poster = p.user;
   let postHint = gradeHint(C, p.title);
   const headerDates = new Map();
-  let curArt = '', curFixed, curStated, curMo = 0, curDy = 0, curWd = false;
+  let curArt = morningAbsenceKeyword.test(normalize(p.title)) ? MORNING_ABSENCE_ARTICLE : '';
+  let curFixed, curStated, curMo = 0, curDy = 0, curWd = false;
   const postWd = p.title.includes('취하');
   const pending = [], local = [];
   const lines = normalize(p.text).split('\n');
@@ -334,7 +347,7 @@ export function parsePost(C, p) {
     const maleCurfew = groupOf(poster) === '남사감' && (/통금\s*위반/.test(ln) || (!findArticle(C, ln, poster).art && curArt.toLowerCase() === 'violated curfew regulation'));
     // Parenthesized names are separate 3-point defendants, not annotations.
     const expanded = maleCurfew ? ln.replace(/\(([^()]*)\)/g, (whole, inner) => words(inner).some(([w]) => isKnown(C,w)) ? ' ' + inner + ' ' : whole) : ln;
-    const line2 = grabParens(C, expanded, per, poster);
+    const line2 = grabParens(C, expanded.replace(morningAbsenceKeyword, keyword => keyword.endsWith('불참') ? stripParens(keyword) : keyword), per, poster);
     const { art, fixed, kw } = findArticle(C, line2, poster);
     let stated; if (art) { const k = numBefore(line2, '점'); if (k > 0) stated = k; }
     const rep = repCount(line2);
@@ -609,13 +622,25 @@ function repairPersonalPoints(C, input) {
 export function applySourceRules(C, row) {
   const r = {...row, flags: (row.flags || []).map(f => f.slice())};
   r.name = canonicalName(r.name || '', C);
+  const oldArt = r.art, normalizedArt = normalizeArticle(oldArt);
+  r.art = normalizedArt;
   const edited = new Set(r.edited || []);
   if (r.src === 'file' || r.added || r.placeholder) return r;
   const male = groupOf(r.user) === '남사감';
-  if (male && !edited.has('art') && /신성\s*(지각|불참)/.test(r.line || '')) {
-    const wanted = /신성\s*지각/.test(r.line) ? 'late for morning exercise' : 'absent from morning exercise';
-    r.art = C.articleList.find(a => a.toLowerCase() === wanted) || wanted;
+  if (male && !edited.has('art') && /신성\s*지각/.test(r.line || '')) {
+    r.art = C.articleList.find(a => a.toLowerCase() === 'late for morning exercise') || 'late for morning exercise';
     if (!edited.has('pts')) { const pts = C.artPoints.get(r.art); if (typeof pts === 'number') r.pts = pts; }
+  }
+  if (!edited.has('art') && morningAbsenceKeyword.test(r.line || '') && r.art !== MORNING_ABSENCE_ARTICLE) {
+    r.art = MORNING_ABSENCE_ARTICLE;
+  }
+  if (r.art === MORNING_ABSENCE_ARTICLE && !edited.has('art') && !edited.has('pts') &&
+      (retiredMorningAbsence.test((oldArt || '').trim()) || normalizedArt !== r.art)) {
+    const pts = C.artPoints.get(r.art);
+    if (typeof pts === 'number') {
+      r.pts = pts;
+      r.flags = r.flags.filter(f => f[0] !== 'pts');
+    }
   }
   if (male && !edited.has('art') && /지각/.test(r.line || '') && !/신성\s*지각/.test(r.line || '') && /^late for school(?: 7)?$/i.test(r.art || '')) {
     r.art = C.articleList.find(a => a.toLowerCase() === 'late for school 7') || 'Late for school 7';

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import vm from 'node:vm';
 import * as E from '../engine.js';
+import { ARTICLES } from '../manual.js';
 const refs={roster:[{name:'이지효',grade:1},{name:'황예진',grade:1}],articles:[{art:'Late for school',pts:3},{art:'Late for school 7',pts:7},{art:'Violated curfew regulation',pts:8}],dict:[{kw:'지각',art:'Late for school'},{kw:'통금 위반',art:'Violated curfew regulation'}]};
 const ctx=()=>Object.assign(E.makeCtx(refs,'2026-11-08'),{femaleDefaultDate:'2026-11-11'});
 const parse=(text,user='김대기')=>{const C=ctx(); return E.mentionsToRows(C,E.parsePost(C,{id:'1',date:'2026-11-08',user,title:'생활',text})).rows.map((r,i)=>({...r,id:'r'+i,seq:i}));};
@@ -11,6 +12,38 @@ test('male tardiness is school 7, other departments retain dictionary mapping',(
  assert.equal(parse('지각 - 이지효')[0].art,'Late for school 7');
  assert.equal(parse('지각 - 이지효','박주영')[0].art,'Late for school');
  assert.equal(parse('지각 - 이지효','다른교사')[0].art,'Late for school');
+});
+test('weekday morning exercise absence uses the outdoor article in new and saved lists',()=>{
+ const retired='Absent from morning exercise', misspelled='Violated outdoor regualtion(심신수련)';
+ const art='Violated outdoor regulation(심신수련)';
+ const C=E.makeCtx({...refs,articles:[...refs.articles,{art,pts:6},{art:retired,pts:8},{art:misspelled,pts:4},{art:'Late for morning exercise',pts:2}],
+  dict:[...refs.dict,{kw:'신성 미참석',art:retired,fixed:8}]},'2026-11-08');
+ const read=(text,user,title='생활')=>E.mentionsToRows(C,E.parsePost(C,{id:'1',date:'2026-11-08',user,title,text})).rows;
+ for(const [text,user,title] of [
+  ['평일 신성불참 이지효','김대기'],
+  ['평일 신성 불참\n이지효','곽노재'],
+  ['아침기 불참 이지효','다른교사'],
+  ['아침기(평일 신성) 불참 이지효','다른교사'],
+  ['이지효','김명순','평일 신성 불참'],
+  [retired+' 이지효','김대기'],
+  [misspelled+' 이지효','김대기'],
+  ['신성 미참석 이지효','김대기'],
+ ]){
+  const rows=read(text,user,title);
+  assert.deepEqual(rows.map(r=>[r.name,r.art,r.pts]),[['이지효',art,6]]);
+  assert.deepEqual(E.compute(C,rows).list.map(r=>r.art),[art]);
+ }
+ assert.equal(read('평일 신성 지각 이지효','김대기')[0].art,'Late for morning exercise');
+ const saved=row({art:retired,line:'이지효',pts:8,flags:[['pts','old']]});
+ const normalized=E.compute(C,[saved]).list[0];
+ assert.deepEqual([normalized.art,normalized.pts,normalized.flags],[art,6,[]]);
+ assert.equal(saved.art,retired);
+ assert.equal(E.compute(C,[{...saved,edited:['pts']}]).list[0].pts,8);
+ assert.equal(E.compute(C,[{...saved,src:'file'}]).list[0].art,art);
+ assert.equal(E.extraMentions(C,[{art:retired,name:'이지효',acc:'아침기'}])[0].art,art);
+ assert.equal(E.makeCtx({articles:[{art:misspelled,pts:4}]},'2026-11-08').artPoints.get(art),4);
+ assert(!C.articleList.includes(retired) && !C.articleList.includes(misspelled));
+ assert(ARTICLES.includes(art) && !ARTICLES.includes(retired) && !ARTICLES.includes(misspelled));
 });
 test('male curfew keeps outside names at 8 and parenthesized names at 3',()=>{
  for(const text of ['통금 위반 - 이지효(황예진)','통금 위반\n이지효(황예진)','통금 위반 - 이지효 ( 황예진 )']){

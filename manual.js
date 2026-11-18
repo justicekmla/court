@@ -1,7 +1,7 @@
-import * as E from './engine.js';
+import * as E from './engine.js?v=morning-absence-20261118';
 export const ARTICLES = [
 'Late for school', 'Late for school 7', 'Late for 혼정', 'Late for morning exercise', 'Late for court',
-'Absent from school', 'Absent from 혼정', 'Violated outdoor regualtion(심신수련)', 'Absent from court',
+'Absent from school', 'Absent from 혼정', E.MORNING_ABSENCE_ARTICLE, 'Absent from court',
 'Violated cleaning regulation', 'Violated cleaning regulation(택배)', 'Violated computer regulation in School',
 'Violated computer regulation in Dorm', 'Violated self-study regulation', 'Violated curfew regulation',
 'Dress code in Dorm', 'Dress code in School', 'Dresscode', 'Nametag', 'Violated outdoor regulation', 'Violated food regulation',

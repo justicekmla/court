@@ -1,5 +1,5 @@
-import * as E from './engine.js?v=20261107';
-import * as M from './manual.js?v=articles-20261108-2';
+import * as E from './engine.js?v=morning-absence-20261118';
+import * as M from './manual.js?v=morning-absence-20261118';
 import {readCourtFile,writeEditedCourt} from './courtfile.js?v=titles-20261108-4';
 const H=M.H;
 // Keep the uploaded workbook and edits together across refreshes in this browser.
@@ -8,6 +8,7 @@ async function draftDB(value,write=false){const db=await openDB();try{return awa
 export function createVersion2(api){
  let source=null,buffer=null,rows=[],query='',busy=false,preview=false,loading=true;
  let serial=Promise.resolve();
+ const normalizeRows=items=>items.map(r=>({...r,art:E.normalizeArticle(r.art)}));
  const live=()=>E.sortRows(rows.filter(r=>!r.deleted));
  function context(){const refs=api.refs(),map=new Map((refs.roster||[]).map(r=>[r.name,r]));for(const r of source?.rows||[])if(!map.has(r.name))map.set(r.name,{name:r.name,grade:r.grade});return E.makeCtx({...refs,roster:[...map.values()]},api.sunday());}
  function persist(){const value=source?{buffer,source,rows}:null;serial=serial.catch(()=>{}).then(()=>draftDB(value,true));return serial;}
@@ -29,7 +30,7 @@ export function createVersion2(api){
  async function loadFile(file){if(busy)return;busy=true;try{const next=await file.arrayBuffer(),parsed=await readCourtFile(next,file.name,api.sunday());const baseCtx=E.makeCtx(api.refs(),api.sunday());
  const ambiguous=new Set(parsed.rows.filter(r=>parsed.rows.some(other=>other.name===r.name && other.grade!==r.grade)).map(r=>r.name));
  for(const r of parsed.rows){const found=E.lookup(baseCtx,r.name.replace(/\s+(?=\d{2}$)/,''),r.grade).filter(n=>baseCtx.rosterFull.get(n)===r.grade);if(found.length===1){r.name=found[0];r.disp=E.displayName(baseCtx,r.name);}else if(ambiguous.has(r.name)){r.name=E.baseName(r.name)+E.gradeToGisu(r.grade,api.sunday());r.disp=r.name;}}
- const old={source,buffer,rows};source=parsed;buffer=next;rows=parsed.rows;try{await persist();}catch(e){({source,buffer,rows}=old);throw e;}preview=false;query='';api.toast('법정리스트 '+rows.length+'건을 불러왔습니다.');}catch(e){api.toast('파일을 읽지 못했습니다: '+e.message,7000);}finally{busy=false;api.render();}}
+ const old={source,buffer,rows};source=parsed;buffer=next;rows=normalizeRows(parsed.rows);try{await persist();}catch(e){({source,buffer,rows}=old);throw e;}preview=false;query='';api.toast('법정리스트 '+rows.length+'건을 불러왔습니다.');}catch(e){api.toast('파일을 읽지 못했습니다: '+e.message,7000);}finally{busy=false;api.render();}}
  async function upload(file){if(source)api.confirmBox('파일을 바꿀까요?','현재 추가·삭제 내역이 초기화됩니다.','파일 바꾸기',()=>loadFile(file));else await loadFile(file);}
  async function add(item){if(busy)return;const C=context(),rep=C.reps.has(E.baseName(item.name));await commit(rows.concat({...item,id:api.uid(),disp:item.name,accuser:E.accuser(item.acc),finalPts:item.pts+(rep?1:0),added:true}));api.toast('기소를 추가했습니다.');}
  async function action(act,button){if(busy)return;try{
@@ -38,6 +39,6 @@ export function createVersion2(api){
   if(act==='v2remove')api.confirmBox('파일을 삭제할까요?','버전2 파일과 추가·삭제 내역을 지웁니다.','삭제',async()=>{await serial.catch(()=>{});await draftDB(null,true);source=null;buffer=null;rows=[];query='';preview=false;api.render();});
   if(act==='v2download'&&preview){if(api.isSaving?.())throw Error('입력 정보 저장이 끝난 뒤 다시 눌러 주세요.');busy=true;const blob=await writeEditedCourt(buffer,source,live(),api.outputInfo?.()||null);const info=api.outputInfo?.();const listNo=info?.listNo||source.listNo||/Court\s+List\s+(\d+)/i.exec(source.sheetXml)?.[1];api.downloadBlob(blob,(listNo?'Court List '+listNo+' Ver.2':source.fileName.replace(/\.(xlsx|xlsm)$/i,'')+' Ver.2')+'.'+(source.macro?'xlsm':'xlsx'));}
  }catch(e){api.toast('처리하지 못했습니다: '+e.message,7000);}finally{busy=false;}}
- draftDB().then(d=>{if(d){source=d.source;buffer=d.buffer;rows=d.rows;}},e=>api.toast('이 브라우저에서 임시 저장을 사용할 수 없습니다: '+e.message,7000)).finally(()=>{loading=false;api.render();});
+ draftDB().then(d=>{if(d){source=d.source;buffer=d.buffer;rows=normalizeRows(d.rows);}},e=>api.toast('이 브라우저에서 임시 저장을 사용할 수 없습니다: '+e.message,7000)).finally(()=>{loading=false;api.render();});
  return {view,context,upload,add,action,metadataChanged(){preview=false;},search(value){query=value;const el=document.getElementById('v2-results');if(el)el.innerHTML=deleteResults();}};
 }
