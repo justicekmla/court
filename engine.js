@@ -598,7 +598,9 @@ export function expandSourceRows(C, input) {
   // Restore known long names omitted by the old length filter.
   // A retained (even deleted or edited) row prevents recreation on later renders.
   for (const p of C.sourcePosts || []) {
-    const siblings = rows.filter(r => String(r.post) === String(p.id) && !r.added && r.src !== 'file');
+    const key = postKey(p.id, uploadGroupOf(p));
+    const samePost = r => r.src !== 'file' && postKey(r.post, uploadGroupOf(r)) === key;
+    const siblings = rows.filter(r => samePost(r) && !r.added);
     if (!siblings.length && !C.restoreMissingNames) continue;
     if (C.restoreMissingNames && (!p.date || p.date < addDays(C.baseDate,-6) || p.date > C.baseDate)) continue;
     const parsed = parsePost(C, p);
@@ -608,8 +610,8 @@ export function expandSourceRows(C, input) {
     const mentions = parsed.filter(m => canonicalName(baseName(m.tok), C).length > 4 && isKnown(C, m.tok));
     for (let i=0; i<mentions.length; i++) {
       const m=mentions[i];
-      if (rows.some(r => String(r.post)===String(p.id) && r.group===m.group && canonicalName(baseName(r.tok || r.name), C)===canonicalName(baseName(m.tok), C))) continue;
-      const id='alias-'+p.id+'-'+m.lineNo+'-'+i;
+      if (rows.some(r => samePost(r) && r.group===m.group && canonicalName(baseName(r.tok || r.name), C)===canonicalName(baseName(m.tok), C))) continue;
+      const id='alias-'+p.id+'-'+uploadGroupOf(p)+'-'+m.lineNo+'-'+i;
       const recovered=mentionsToRows(C,[m]).rows;
       const base=siblings[0] || {};
       recovered.forEach((r,k)=>rows.push({...r,...((base.uploadGroup || p.uploadGroup) ? {uploadGroup:base.uploadGroup || p.uploadGroup} : {}),id:id+'-'+k,mid:id,order:base.order || 0,seq:(base.seq || 0)+0.001*(i+k+1),excluded:siblings.length ? !!base.excluded : p.mark==='제외',recoveredFromAlias:true}));
@@ -622,7 +624,7 @@ export function expandSourceRows(C, input) {
         const found = lookup(C,tok,gradeOf(C,r.name));
         if (found.length !== 1) continue;
         const name = found[0];
-        if (rows.some(q => q.group === r.group && (q.name === name || q.tok === tok))) continue;
+        if (rows.some(q => q.group === r.group && uploadGroupOf(q) === uploadGroupOf(r) && (q.name === name || q.tok === tok))) continue;
         const id = r.id + '-curfew-' + name;
         rows.push({...r, id, mid: id, name, tok, pts: 3, flags: [], edited: [], recoveredFrom: r.id, keepDuplicate: false});
       }
@@ -822,6 +824,9 @@ export function groupOf(user) {
   if (u === '곽노재' || u === '김명순') return '아침기';
   return '인트라넷';
 }
+
+export const uploadGroupOf = entry => GROUPS.includes(entry.uploadGroup) ? entry.uploadGroup : groupOf(entry.user);
+export const postKey = (id, group) => JSON.stringify([group, String(id)]);
 
 // 인트라넷 즐겨찾기로 복사한 글(탭으로 나뉜 줄) 읽기
 export function parsePasted(text) {

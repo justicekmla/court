@@ -2,8 +2,8 @@ import {directoryPanel,filterDirectory} from './directory.js?v=20261114-1';
 import * as CM from './court-meta.js?v=titles-20261108-4';
 import * as Roster from './roster.js?v=semester-20261107-1';
 import {verifyChiefPassword,parseChiefSetup,validChiefVerifier} from './chief-auth.js?v=semester-20261107-1';
-import { sourceStamp, rowsForGroup, combinedRows, currentStamps as stampsForGroups, reviewSnapshotMatches, memberReviewStage, canonicalString } from './review.js?v=grade-review-20261122';
-import * as E from './engine.js?v=morning-day-20261122';
+import { sourceStamp, rowsForGroup, combinedRows, currentStamps as stampsForGroups, reviewSnapshotMatches, memberReviewStage, canonicalString, ownedRows, scopedPosts, planPostUpload } from './review.js?v=post-routing-20261122';
+import * as E from './engine.js?v=post-routing-20261122';
 import * as M from './manual.js?v=morning-day-20261122';
 import { createVersion2 } from './version2.js?v=morning-day-20261122';
 import * as IO from './io.js?v=morning-day-20261122';
@@ -59,16 +59,16 @@ let ctxCache = { key: '', C: null };
 function ctx() {
   const key = (st().courtMeta?.courtDate || '') + '|' + (S.docs.refs ? S.docs.refs.updatedAt || 'x' : '') + '|' + sundayOf();
   if (ctxCache.key !== key) ctxCache = { key, C: Object.assign(E.makeCtx(S.docs.refs || {}, sundayOf()), {femaleDefaultDate: st().courtMeta?.courtDate || sundayOf()}) };
-  ctxCache.C.sourcePosts = S.docs.posts?.posts || [];
+  ctxCache.C.sourcePosts = scopedPosts(S.docs.posts?.posts || [], E.GROUPS.map(gdoc));
   return ctxCache.C;
 }
 const gdoc = g => S.docs['g_' + GKEY[g]];
 const draftBuffers = new Map(), groupWrites = new Map();
-const working = g => { const d = gdoc(g), buffer = draftBuffers.get(g); return buffer && buffer.revision === (d?.revision || '') ? buffer.rows : d ? (d.draft || d.rows || []) : []; };
-const committed = g => { const d = gdoc(g); return d ? (d.rows || []) : []; };
+const working = g => { const d = gdoc(g), buffer = draftBuffers.get(g); return ownedRows(buffer && buffer.revision === (d?.revision || '') ? buffer.rows : d?.draft || d?.rows || [], g); };
+const committed = g => ownedRows(gdoc(g)?.rows || [], g);
 const reviewComplete = d => memberReviewStage(d) === 'complete';
 const memberCanEdit = (d, role, phase) => phase === 'review' && memberReviewStage(d) === MEMBER_STAGES[role];
-function postsById() { const m = new Map(); for (const p of (S.docs.posts && S.docs.posts.posts) || []) m.set(String(p.id), p); return m; }
+function postsByKey() { return new Map(ctx().sourcePosts.map(p => [E.postKey(p.id, p.uploadGroup), p])); }
 function extrasRows() {
   const items = ((S.docs.extras && S.docs.extras.items) || []).filter(x => !x.deleted);
   const C = ctx(); const out = [];
@@ -268,7 +268,13 @@ function viewPaste() {
         '<button class="ghost" data-act="emptyGroup" data-g="' + g + '">이번 주 해당 글 없음</button></details>';
     }).join('') + '</div>';
 }
-async function doOrganize(group, empty = false) {
+function describePostLocations(details) {
+  const statusLabels = { included: '전체 글 포함', excluded: '전체 글 제외', partial: '일부 행 제외' };
+  return details.map(({ id, title, locations }) =>
+    '글 ' + id + (title ? ' ' + title : '') + ' · ' + locations.map(({ group, status }) =>
+      group + ' (' + statusLabels[status] + ')').join(', '));
+}
+async function doOrganize(group, empty = false, approval) {
   const member = S.role === 'member';
   if (S.saving || !Object.hasOwn(GKEY, group) ||
       !(member ? group === S.group : S.role === 'chief' && S.chiefUnlocked)) return;
@@ -280,12 +286,17 @@ async function doOrganize(group, empty = false) {
     return;
   }
   const sunday = (member ? '' : document.getElementById('sunday')?.value) || sundayOf();
+  if (approval && (approval.submitted !== submitted || approval.sunday !== sunday)) {
+    toast('붙여넣은 글 또는 기준 주간이 바뀌었습니다. 다시 등록해 주세요.');
+    return;
+  }
   const posts = empty ? [] : E.parsePasted(submitted).map(post => ({ ...post, uploadGroup: group }));
   if (!empty && !posts.length) { toast('붙여넣은 글을 읽지 못했습니다.', 5000); return; }
   const monday = E.addDays(sunday, -6);
   const wk = E.extractWeek(Object.assign(E.makeCtx(S.docs.refs, sunday), {femaleDefaultDate: st().courtMeta?.courtDate || sunday}), posts, monday, sunday);
   if (!empty && !wk.posts.length) { toast('표시된 주간에 올라온 글이 없습니다. 게시일을 확인해 주세요.', 5000); return; }
-  await save(async () => {
+  let plan, uploaded;
+  const ok = await save(async () => {
     if (member && !empty) {
       const pending = groupWrites.get(group);
       if (pending?.revision === (gdoc(group)?.revision || '') && !(await pending.task)) {
@@ -293,10 +304,14 @@ async function doOrganize(group, empty = false) {
       }
     }
     await store.transaction(async tx => {
-      const state = await tx.get('cfg/state') || {};
-      const previous = await tx.get('cur/posts') || {};
+      uploaded = false;
       const path = 'cur/g_' + GKEY[group];
-      const d = await tx.get(path);
+      const [stateDoc, previousDoc, groups, final] = await Promise.all([
+        tx.get('cfg/state'), tx.get('cur/posts'),
+        Promise.all(E.GROUPS.map(g => tx.get('cur/g_' + GKEY[g]))), tx.get('cur/final'),
+      ]);
+      const state = stateDoc || {}, previous = previousDoc || {};
+      const d = groups[E.GROUPS.indexOf(group)];
       if (state.phase && !['idle', 'review'].includes(state.phase)) throw Error('크로스체크 단계에서 글을 추가해 주세요.');
       if ((state.phase === 'review' && state.sunday !== sunday) || (member && state.sunday && state.sunday !== sunday)) {
         throw Error('진행 중인 주의 날짜가 변경되었습니다. 새로고침해 주세요.');
@@ -304,22 +319,47 @@ async function doOrganize(group, empty = false) {
       if (member && d && memberReviewStage(d) !== 'first') throw Error('이미 1학년 검토를 마친 업무입니다.');
       if (empty && d) throw Error('이미 자료가 등록된 업무입니다.');
       const existing = previous.posts || [];
-      const seen = new Set(existing.map(p => String(p.id)));
-      const added = wk.posts.filter(p => !seen.has(String(p.id))).map(p => ({ ...p, uploadGroup: group }));
-      if (!empty && !added.length) throw Error('모두 이미 등록된 글입니다.');
+      plan = planPostUpload(wk.posts, group, existing, groups, final);
+      if (!empty && (!plan.added.length ||
+          (plan.conflicts.length && canonicalString(plan.conflicts) !== approval?.signature))) return;
+      const added = plan.added.map(p => ({ ...p, uploadGroup: group }));
       const addedIds = new Set(added.map(p => String(p.id)));
       const now = new Date().toISOString(), revision = uid();
       const newRows = wk.rows.filter(r => addedIds.has(String(r.post))).map(r => ({ ...r, uploadGroup: group, id: revision + '-' + r.id, mid: revision + '-' + r.mid }));
-      const rows = (d && (d.draft || d.rows) || []).concat(newRows);
+      const rows = ownedRows(d?.draft || d?.rows || [], group).concat(newRows);
       tx.set(path, { ...(d || {}), rows, draft: null, done: empty, doneAt: empty ? now : null, noPosts: empty, firstDoneAt: null, revision, createdAt: d && d.createdAt || now, updatedAt: now });
       tx.set('cur/posts', { ...previous, posts: existing.concat(added), monday, sunday, createdAt: previous.createdAt || now });
       tx.set('cfg/state', { ...state, phase: 'review', sunday, monday, startedAt: state.startedAt || now, listNo: state.listNo || 1 });
-      if (!member) tx.del('cur/final');
+      if (final) {
+        const key = GKEY[group];
+        const reviewed = { ...final.reviewed };
+        delete reviewed[key];
+        tx.set('cur/final', { ...final, reviewed, sourceStamps: { ...final.sourceStamps, [key]: 'v2:pending' } });
+      }
+      uploaded = true;
     });
-    if (input && input.value === submitted) input.value = '';
-    const currentInput = document.getElementById('paste-' + GKEY[group]);
-    if (currentInput && currentInput.value === submitted) currentInput.value = '';
-  }, group + (empty ? ' · 이번 주 해당 글 없음으로 등록했습니다.' : ' 자료를 등록했습니다'));
+  });
+  if (!ok) return;
+  if (!uploaded) {
+    const existing = describePostLocations(plan.duplicates);
+    if (plan.conflicts.length) {
+      const details = describePostLocations(plan.conflicts);
+      const html = details.map(H).join('<br>') + (existing.length ? '<br><br>이미 이 업무에 등록된 글<br>' + existing.map(H).join('<br>') : '') +
+        '<br><br>다른 업무에 등록된 글을 <b>' + H(group) + '</b>에도 넣을까요?';
+      confirmBox('다른 업무에 이미 등록된 글', html, group + '에도 넣기', () =>
+        doOrganize(group, empty, { submitted, sunday, signature: canonicalString(plan.conflicts) }));
+    } else {
+      confirmBox('이미 등록된 글', existing.map(H).join('<br>'), '확인');
+    }
+    return;
+  }
+  if (input && input.value === submitted) input.value = '';
+  const currentInput = document.getElementById('paste-' + GKEY[group]);
+  if (currentInput && currentInput.value === submitted) currentInput.value = '';
+  if (empty) toast(group + ' · 이번 주 해당 글 없음으로 등록했습니다.');
+  else if (plan.duplicates.length && !plan.conflicts.length) {
+    confirmBox(group + '에 ' + plan.added.length + '개 등록', '이미 등록된 글<br>' + describePostLocations(plan.duplicates).map(H).join('<br>'), '확인');
+  } else toast(group + ' · ' + plan.added.length + '개 글을 등록했습니다.');
 }
 // ---------------------------------------------------------------- 2) 크로스체크 대기
 function gradeStatus(d, grade, active = true) {
@@ -536,21 +576,26 @@ function statusBadge(r) {
 }
 function rowsTable(rows, sm, opt) {
   rows = E.expandSourceRows(ctx(), rows);
-  const P = postsById(); const C = ctx();
-  const order = []; const by = new Map();
-  for (const r of rows) { if (!by.has(r.post)) { by.set(r.post, []); order.push(r.post); } by.get(r.post).push(r); }
-  if (!order.length) return '<p class="muted">이 담당에 해당하는 글이 없습니다.</p>';
-  order.sort((x, y) => (parseFloat(x) || 0) - (parseFloat(y) || 0));
+  const P = postsByKey(); const C = ctx();
+  const by = new Map();
+  for (const r of rows) {
+    const key = E.postKey(r.post, E.uploadGroupOf(r));
+    if (!by.has(key)) by.set(key, []);
+    by.get(key).push(r);
+  }
+  if (!by.size) return '<p class="muted">이 담당에 해당하는 글이 없습니다.</p>';
+  const order = [...by].sort(([, a], [, b]) => Number(a[0].post) - Number(b[0].post));
   const bulkKey = opt.scope + '-' + rows[0].id;
   return '<div data-bulk-table="' + opt.scope + '">' +
     '<div class="bulk-tools row-inline"><label><input type="checkbox" data-bulk-all> 전체 선택</label>' +
     '<span class="muted small" data-bulk-count aria-live="polite">0건 선택</span>' +
     '<label>날짜 <input type="date" data-bulk-date data-keep="' + H(bulkKey) + '-date"></label>' +
     '<label>기소 항목 ' + artSelect('', 'data-bulk-art data-keep="' + H(bulkKey) + '-art"') + '</label>' +
-    '<button class="outline small" data-act="bulkApply" disabled>선택한 행에 적용</button></div>' + order.map(pid => {
-    const p = P.get(String(pid)) || { id: pid, title: '', user: '', date: '', text: '' };
-    const list = by.get(pid).slice().sort((a, b) => (a.lineNo || 0) - (b.lineNo || 0) || (a.seq || 0) - (b.seq || 0));
-    const excl = list.some(r => r.excluded);
+    '<button class="outline small" data-act="bulkApply" disabled>선택한 행에 적용</button></div>' + order.map(([key, entries]) => {
+    const first = entries[0], pid = first.post, group = E.uploadGroupOf(first);
+    const p = P.get(key) || { id: pid, title: first.title || '', user: first.user || '', date: '', text: '' };
+    const list = entries.slice().sort((a, b) => (a.lineNo || 0) - (b.lineNo || 0) || (a.seq || 0) - (b.seq || 0));
+    const excl = list.every(r => r.excluded);
     const real = list.filter(r => !r.placeholder);
     const dateCounts = new Map();
     let needsReview = 0, lastLine = null;
@@ -572,23 +617,24 @@ function rowsTable(rows, sm, opt) {
         '<td class="src-line">' + (showLine ? H(r.line) : '') + '</td>' +
         '<td><input class="cell ' + (S.showColors ? nf : '') + '" data-f="name" value="' + H(nameVal) + '" title="' + H(fl.name || fl.ambig || '') + '"></td>' +
         '<td><input class="cell ' + (fl.date ? 'f-date' : '') + '" data-f="date" value="' + H(r.date ? E.fmtMD(r.date) : '') + '" placeholder="날짜" size="5" title="' + H(fl.date || '') + '"></td>' +
+        '<td>' + (r.added ? '<input class="cell" data-f="accuser" aria-label="기소자" placeholder="기소자" value="' + H(r.accuser) + '">' : H(r.accuser)) + '</td>' +
         '<td>' + artSelect(r.art, 'data-f="art"', fl.pts ? 'f-pts' : '', r.user) + '</td>' +
         '<td><input class="cell num ' + (fl.pts ? 'f-pts' : '') + '" data-f="pts" value="' + H(ptsVal) + '" size="2" title="' + H(fl.pts || '') + '">' + (C.reps.has(E.baseName(c.name || '')) && c.art ? '<span class="rep" title="학생대표: 리스트에서 +1점">+1</span>' : '') + '</td>' +
         '<td class="stat">' + statusBadge(c) + ((c.status === 'dup' || r.keepDuplicate) ? '<button class="outline small" data-act="toggleDuplicate">' + (r.keepDuplicate ? '중복 자동 처리로 되돌리기' : '중복이어도 반영') + '</button>' : '') + '</td>' +
         '<td>' + (c.status === 'deleted' ? '<button class="icon" data-act="undel" title="되살리기">↺</button>' : '<button class="icon" data-act="del" title="이 줄 지우기">✕</button>') + '</td></tr>';
     }).join('');
-    const open = S.openPosts.has(String(pid));
+    const open = S.openPosts.has(key);
     const dateButtons = [...dateCounts].filter(([date]) => date).map(([date, count]) =>
       '<button class="outline small" data-act="bulkSelect" data-date="' + H(date) + '" title="' + H(E.fmtMD(date) + ' 날짜의 행 선택') + '">' + H(E.fmtMD(date)) + ' · ' + count + '건</button>');
     if (needsReview) dateButtons.push('<button class="outline small" data-act="bulkSelect" data-review>확인 필요 · ' + needsReview + '건</button>');
     return '<section class="post' + (excl ? ' excl' : '') + '"><div class="post-h"><span class="pid">글 ' + H(p.id) + '</span><b>' + H(p.title) + '</b><span class="muted small">' + H(p.user) + ' · ' + E.fmtMD(p.date) + ' ' + H((p.time || '').slice(0, 5)) + '</span>' +
-      (excl ? '<span class="b gray">제외: ' + H(p.markNote || '') + '</span>' : '') + '<span class="grow"></span>' +
-      '<button class="ghost small" data-act="toggleText" data-pid="' + H(pid) + '">' + (open ? '원문 닫기' : '원문 전체') + '</button>' +
-      '<button class="ghost small" data-act="' + (excl ? 'incl' : 'excl') + '" data-pid="' + H(pid) + '" data-scope="' + opt.scope + '">' + (excl ? '이 글 넣기' : '이 글 빼기') + '</button></div>' +
+      (excl ? '<span class="b gray">전체 글 제외' + (p.markNote ? ' · ' + H(p.markNote) : '') + '</span>' : '') + '<span class="grow"></span>' +
+      '<button class="ghost small" data-act="toggleText" data-post-key="' + H(key) + '">' + (open ? '원문 닫기' : '원문 전체') + '</button>' +
+      '<button class="ghost small" data-act="' + (excl ? 'incl' : 'excl') + '" data-pid="' + H(pid) + '" data-post-group="' + H(group) + '" data-scope="' + opt.scope + '">' + (excl ? '이 글 넣기' : '이 글 빼기') + '</button></div>' +
       (open ? '<pre class="fulltext">' + H(E.normalize(p.text || '')) + '</pre>' : '') +
       (dateButtons.length ? '<div class="row-inline bulk-dates">' + dateButtons.join('') + '</div>' : '') +
-      (real.length ? '<div class="tablewrap"><table class="grid edit"><colgroup><col style="width:36px"><col class="c-line"><col class="c-name"><col class="c-date"><col class="c-art"><col class="c-pts"><col class="c-st"><col class="c-x"></colgroup><thead><tr><th>선택</th><th>원문 줄</th><th>이름</th><th>날짜</th><th>기소 항목</th><th>점수</th><th>상태</th><th></th></tr></thead><tbody>' + trs + '</tbody></table></div>' : '<p class="muted small none">(뽑힌 항목 없음 — 원문 전체를 확인하세요)</p>') +
-      '<button class="ghost small add" data-act="addRow" data-pid="' + H(pid) + '" data-scope="' + opt.scope + '">+ 줄 추가</button></section>';
+      (real.length ? '<div class="tablewrap"><table class="grid edit"><colgroup><col style="width:36px"><col class="c-line"><col class="c-name"><col class="c-date"><col class="c-accuser"><col class="c-art"><col class="c-pts"><col class="c-st"><col class="c-x"></colgroup><thead><tr><th>선택</th><th>원문 줄</th><th>이름</th><th>날짜</th><th>기소자</th><th>기소 항목</th><th>점수</th><th>상태</th><th></th></tr></thead><tbody>' + trs + '</tbody></table></div>' : '<p class="muted small none">(뽑힌 항목 없음 — 원문 전체를 확인하세요)</p>') +
+      '<button class="ghost small add" data-act="addRow" data-pid="' + H(pid) + '" data-post-group="' + H(group) + '" data-scope="' + opt.scope + '">+ 줄 추가</button></section>';
   }).join('') + '</div>';
 }
 
@@ -634,7 +680,7 @@ async function finishMemberReview() {
     const path = 'cur/g_' + GKEY[group];
     await save(() => store.transaction(async tx => {
       const state = await tx.get('cfg/state'), latest = await tx.get(path);
-      const rows = latest?.draft || latest?.rows;
+      const rows = ownedRows(latest?.draft || latest?.rows || [], group);
       if (!memberCanEdit(latest, role, state?.phase) || (latest.revision || '') !== revision || canonicalString(rows) !== shown) {
         throw Error('자료가 변경되었습니다. 내용을 다시 확인해 주세요.');
       }
@@ -716,6 +762,7 @@ function editField(scope, id, f, value) {
   const rows = scopeRows(scope); const r = rows.find(x => x.id === id); if (!r) return;
   if (f === 'name') { r.name = value.trim(); markEdited(r, 'name'); }
   else if (f === 'date') { const d = value.trim() ? E.toDate(value, sundayOf()) : ''; if (value.trim() && !d) { toast('날짜를 10/23 처럼 적어 주세요'); render(); return; } r.date = d; markEdited(r, 'date'); }
+  else if (f === 'accuser' && r.added) { r.accuser = value.trim(); markEdited(r, 'accuser'); }
   else if (f === 'art') setArticle(r, value);
   else if (f === 'pts') { r.pts = value === '' ? 0 : Number(value); markEdited(r, 'pts'); }
   saveScope(scope, rows); renderLater();
@@ -727,18 +774,19 @@ function rowAction(scope, id, act) {
   if (act === 'toggleDuplicate') r.keepDuplicate = !r.keepDuplicate;
   saveScope(scope, rows); render();
 }
-function postAction(scope, pid, act) {
+function postAction(scope, pid, group, act) {
   const rows = scopeRows(scope);
+  const key = E.postKey(pid, group);
+  const same = rows.filter(r => E.postKey(r.post, E.uploadGroupOf(r)) === key);
+  if (!same.length) return;
   if (act === 'addRow') {
-    const same = rows.filter(r => String(r.post) === String(pid));
-    const base = same[same.length - 1] || {};
-    const p = postsById().get(String(pid)) || {};
+    const base = same[same.length - 1];
     const nid = uid();
-    const r = { id: nid, post: String(pid), user: p.user || base.user, title: p.title || base.title, line: '(직접 추가)', lineNo: 99999, mid: 'add-' + nid, name: '', tok: '',
-      date: '', art: '', pts: '', flags: [], accuser: E.accuser(p.user || base.user), group: 'add|' + nid, wd: false, src: '', added: true, edited: [],
-      order: base.order || 0, seq: (base.seq || 0) + 0.001 * (same.length + 1), unassigned: true, excluded: false };
-    rows.splice(rows.indexOf(base) + 1 || rows.length, 0, r);
-  } else for (const r of rows) if (String(r.post) === String(pid)) r.excluded = act === 'excl';
+    const r = { id: nid, post: String(pid), uploadGroup: group, user: base.user, title: base.title, line: '(직접 추가)', lineNo: 99999, mid: 'add-' + nid, name: '', tok: '',
+      date: '', art: '', pts: '', flags: [], accuser: E.accuser(base.user), group: 'add|' + nid, wd: false, src: '', added: true, edited: [],
+      order: base.order || 0, seq: (base.seq || 0) + 0.001, unassigned: true, excluded: same.every(row => row.excluded) };
+    rows.splice(rows.indexOf(base) + 1, 0, r);
+  } else for (const r of same) r.excluded = act === 'excl';
   saveScope(scope, rows); render();
 }
 
@@ -776,8 +824,8 @@ app.addEventListener('click', async ev => {
     case 'organize': await doOrganize(b.dataset.g); break;
     case 'emptyGroup': await doOrganize(b.dataset.g, true); break;
     case 'del': case 'undel': case 'toggleDuplicate': rowAction(tr.dataset.scope, tr.dataset.id, act); break;
-    case 'addRow': case 'excl': case 'incl': postAction(b.dataset.scope, b.dataset.pid, act); break;
-    case 'toggleText': { const k = String(b.dataset.pid); S.openPosts.has(k) ? S.openPosts.delete(k) : S.openPosts.add(k); render(); break; }
+    case 'addRow': case 'excl': case 'incl': postAction(b.dataset.scope, b.dataset.pid, b.dataset.postGroup, act); break;
+    case 'toggleText': { const k = b.dataset.postKey; S.openPosts.has(k) ? S.openPosts.delete(k) : S.openPosts.add(k); render(); break; }
     case 'bulkSelect': selectBulkRows(b.closest('.post'), box => b.hasAttribute('data-review') ? box.dataset.needsReview === '1' : box.dataset.date === b.dataset.date); break;
     case 'bulkApply': await applyBulkEdits(b.closest('[data-bulk-table]')); break;
     case 'saveDraft': await saveDraft(); break;
@@ -856,7 +904,7 @@ app.addEventListener('drop', ev => { const d = ev.target.closest('[data-drop]');
 document.addEventListener('keydown', ev => { if (ev.key === 'Enter' && ev.target.classList && ev.target.classList.contains('cell') && ev.target.tagName === 'INPUT') ev.target.blur(); });
 
 function confirmBox(title, html, okText, fn) {
-  S.modal = '<h3>' + H(title) + '</h3><p>' + html + '</p><div class="foot-row"><button class="ghost" data-act="mcancel">취소</button><button class="primary" data-act="mok">' + H(okText) + '</button></div>';
+  S.modal = '<h3>' + H(title) + '</h3><p>' + html + '</p><div class="foot-row">' + (fn ? '<button class="ghost" data-act="mcancel">취소</button>' : '') + '<button class="primary" data-act="mok">' + H(okText) + '</button></div>';
   S.modalOk = fn; render();
 }
 function afterRender() {}

@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import vm from 'node:vm';
 import * as E from '../engine.js';
 import { ARTICLES } from '../manual.js';
-import { canonicalString, memberReviewStage } from '../review.js';
+import { canonicalString, memberReviewStage, ownedRows } from '../review.js';
 const refs={roster:[{name:'이지효',grade:1},{name:'황예진',grade:1}],articles:[{art:'Late for school',pts:3},{art:'Late for school 7',pts:7},{art:'Violated curfew regulation',pts:8}],dict:[{kw:'지각',art:'Late for school'},{kw:'통금 위반',art:'Violated curfew regulation'}]};
 const ctx=()=>Object.assign(E.makeCtx(refs,'2026-11-08'),{femaleDefaultDate:'2026-11-11'});
 const parse=(text,user='김대기')=>{const C=ctx(); return E.mentionsToRows(C,E.parsePost(C,{id:'1',date:'2026-11-08',user,title:'생활',text})).rows.map((r,i)=>({...r,id:'r'+i,seq:i}));};
@@ -117,7 +117,7 @@ test('second review receives the first result and a changed draft cannot be appr
  let confirm, serial=0;
  const S={role:'member2',group:'남사감',editRevision:saved.revision};
  const sandbox={
-  S,E,ctx,canonicalString,MEMBER_ROLES:{member:'1학년',member2:'2학년'},GKEY:{남사감:'m'},groupWrites:new Map(),st:()=>state,
+  S,E,ctx,canonicalString,ownedRows,MEMBER_ROLES:{member:'1학년',member2:'2학년'},GKEY:{남사감:'m'},groupWrites:new Map(),st:()=>state,
   memberCanEdit:(d,role,phase)=>phase==='review'&&memberReviewStage(d)===(role==='member'?'first':'second'),
   gdoc:()=>saved,working:()=>saved.draft||saved.rows,H:String,uid:()=>String(++serial),
   confirmBox:(_title,_body,_label,fn)=>{confirm=fn;},toast:()=>{},

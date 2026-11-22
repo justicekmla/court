@@ -107,8 +107,8 @@ table.grid.compact { width: auto; margin: 10px auto; } table.grid.compact td.num
 .bulk-tools label { display: inline-flex; flex-direction: row; align-items: center; gap: 6px; }
 .bulk-tools select { width: auto; max-width: min(280px, 60vw); }
 .bulk-dates { margin: 6px 0; }
-table.edit { table-layout: fixed; min-width: 860px; }
-col.c-line { width: 29%; } col.c-name { width: 11%; } col.c-date { width: 7%; } col.c-art { width: 25%; } col.c-pts { width: 7%; } col.c-st { width: 14%; } col.c-x { width: 3%; }
+table.edit { table-layout: fixed; min-width: 960px; }
+col.c-line { width: 23%; } col.c-name { width: 11%; } col.c-date { width: 7%; } col.c-accuser { width: 9%; } col.c-art { width: 22%; } col.c-pts { width: 7%; } col.c-st { width: 14%; } col.c-x { width: 3%; }
 td.src-line { font-size: 12.5px; color: #3b4352; white-space: pre-wrap; word-break: break-all; background: #fbfbfc; }
 .cell { width: 100%; border: 1px solid transparent; border-radius: 4px; padding: 3px 5px; background: transparent; min-width: 0; }
 .cell:hover { border-color: var(--line); background: #fff; }
@@ -142,7 +142,7 @@ table.court-t tr.th td { font-size: 12.5px; }
 
 /* 대화상자·알림 */
 .modal-bg { position: fixed; inset: 0; background: rgba(20, 26, 38, .45); display: flex; align-items: center; justify-content: center; z-index: 50; padding: 16px; }
-.modal { background: #fff; border-radius: 12px; padding: 20px 22px; max-width: 460px; width: 100%; box-shadow: 0 12px 40px rgba(0, 0, 0, .25); }
+.modal { max-height: calc(100vh - 32px); overflow-y: auto; background: #fff; border-radius: 12px; padding: 20px 22px; max-width: 460px; width: 100%; box-shadow: 0 12px 40px rgba(0, 0, 0, .25); }
 .modal h3 { margin-top: 0; }
 #toast { position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%) translateY(30px); background: #1d2330; color: #fff; padding: 10px 18px; border-radius: 10px; font-size: 14px; opacity: 0; pointer-events: none; transition: .25s; max-width: calc(100% - 32px); z-index: 60; }
 #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
