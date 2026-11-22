@@ -3,9 +3,9 @@ import * as CM from './court-meta.js?v=titles-20261108-4';
 import * as Roster from './roster.js?v=semester-20261107-1';
 import {verifyChiefPassword,parseChiefSetup,validChiefVerifier} from './chief-auth.js?v=semester-20261107-1';
 import { sourceStamp, rowsForGroup, combinedRows, currentStamps as stampsForGroups, reviewSnapshotMatches, memberReviewStage, canonicalString, ownedRows, scopedPosts, planPostUpload } from './review.js?v=post-routing-20261122';
-import * as E from './engine.js?v=post-routing-20261122';
+import * as E from './engine.js?v=manual-roster-20261123';
 import * as M from './manual.js?v=morning-day-20261122';
-import { createVersion2 } from './version2.js?v=morning-day-20261122';
+import { createVersion2 } from './version2.js?v=manual-roster-20261123';
 import * as IO from './io.js?v=morning-day-20261122';
 import { firebaseStore, localStore } from './store.js?v=uploads-20261101-1';
 
@@ -74,7 +74,10 @@ function extrasRows() {
   const C = ctx(); const out = [];
   items.forEach(it => {
     const { rows } = E.mentionsToRows(C, E.extraMentions(C, [it]));
-    for (const x of rows) out.push({ ...x, mid: 'x-' + it.id, id: 'x-' + it.id + '-' + out.length, order: 1, seq: out.length, extraId: it.id });
+    for (const x of rows) {
+      if (it.src === '직접 입력') { x.name = it.name; x.added = true; }
+      out.push({ ...x, mid: 'x-' + it.id, id: 'x-' + it.id + '-' + out.length, order: 1, seq: out.length, extraId: it.id });
+    }
   });
   return out;
 }
@@ -127,7 +130,7 @@ function render() {
   for (const el of app.querySelectorAll('[data-keep]')) if (el.dataset.keep in keep && !S.resetKeep && !(S.metaResetKeep && el.dataset.keep.startsWith('meta-'))) { if (el.type === 'checkbox') el.checked = keep[el.dataset.keep]; else el.value = keep[el.dataset.keep]; }
   for (const table of app.querySelectorAll('[data-bulk-table]')) updateBulkControls(table);
   for (const key of openUploads) { const el = app.querySelector('details[data-upload="' + key + '"]'); if (el) el.open = true; }
-  for (const prefix of ['v1','v2']) M.updatePicker(prefix, prefix==='v2' && version2 ? version2.context() : ctx(), true);
+  for (const prefix of ['v1','v2']) M.updatePicker(prefix, ctx(), true);
   for(const prefix of ['v1','v2']) { const el=document.getElementById(prefix+'-person'); if(el && keep[prefix+'-person'] && !S.resetKeep) el.value=keep[prefix+'-person']; }
   S.resetKeep = false; S.metaResetKeep=false;
   filterDirectory(app,document.getElementById('directory-search')?.value||'');
@@ -496,6 +499,7 @@ function issueList(res) {
   const out = [];
   for (const r of res.list) for (const [k, m] of r.flags) out.push({ name: r.disp, date: E.fmtDate(r.date), art: r.art, kind: { name: '이름', ambig: '이름', date: '날짜', pts: '점수' }[k], cls: FLAG_CLS[k], msg: m, src: E.sourceLabel(r) });
   for (const r of res.rows) if (r.status === 'unassigned' && !r.wd) out.push({ name: r.tok || r.name, date: '', art: '', kind: '항목 없음', cls: 'f-name', msg: '기소 항목을 찾지 못해 리스트에 넣지 않음', src: E.sourceLabel(r) + ' ' + (r.line || '') });
+  for (const r of res.rows) if (r.status === 'invalidName') out.push({ name: r.name, date: E.fmtDate(r.date), art: r.art, kind: '이름', cls: 'f-name', msg: r.note, src: E.sourceLabel(r) });
   for (const w of res.wdLog) if (w.kind !== 'done') out.push({ name: w.name, date: w.date, art: w.art, kind: '취하', cls: w.kind === 'past' ? 'f-date' : 'f-pts', msg: w.res, src: '글 ' + w.post + '(' + w.user + ')' });
   return out;
 }
@@ -570,9 +574,15 @@ function statusBadge(r) {
     case 'wdreq': return '<span class="b wd">취하 요청</span> <span class="small">' + H(r.note) + '</span>';
     case 'unassigned': return '<span class="b err">' + (r.wd ? H(r.note) : '항목 없음 → 항목을 고르면 반영') + '</span>';
     case 'excluded': return '<span class="b gray">' + H(r.sourceSuppressed ? r.note : '제외된 글') + '</span>';
+    case 'invalidName': return '<span class="b err">' + H(r.note) + '</span>';
     case 'deleted': return '<span class="b gray">지움</span>';
     default: return '';
   }
+}
+function rosterSelect(C, name, attrs) {
+  const placeholder = name && !C.rosterFull.has(name) ? name + ' · 재학생 다시 선택' : '재학생 선택';
+  return '<select ' + attrs + '><option value="" disabled' + (C.rosterFull.has(name) ? '' : ' selected') + '>' + H(placeholder) + '</option>' +
+    [...C.rosterFull].map(([n, grade]) => '<option value="' + H(n) + '"' + (n === name ? ' selected' : '') + '>' + H(M.personLabel(C, n, grade)) + '</option>').join('') + '</select>';
 }
 function rowsTable(rows, sm, opt) {
   rows = E.expandSourceRows(ctx(), rows);
@@ -603,7 +613,7 @@ function rowsTable(rows, sm, opt) {
       const c = sm.get(saved.id) || saved; const r = c; const fl = kinds(c);
       const gray = ['dup', 'withdrawn', 'excluded', 'deleted'].includes(c.status);
       const selectable = !['deleted', 'excluded', 'withdrawn'].includes(c.status);
-      const missing = !r.date || !r.art || !!fl.date;
+      const missing = !r.date || !r.art || !!fl.date || c.status === 'invalidName';
       if (selectable) {
         dateCounts.set(r.date, (dateCounts.get(r.date) || 0) + 1);
         if (missing) needsReview++;
@@ -615,7 +625,9 @@ function rowsTable(rows, sm, opt) {
       return '<tr data-id="' + H(r.id) + '" data-scope="' + opt.scope + '" class="' + (gray ? 'st-dup' : '') + (c.status === 'deleted' ? ' st-del' : '') + '">' +
         '<td>' + (selectable ? '<input type="checkbox" data-bulk-row data-date="' + H(r.date || '') + '" data-needs-review="' + Number(missing) + '" data-keep="bulk-' + opt.scope + '-' + H(r.id) + '" aria-label="' + H((nameVal || '이 행') + ' 선택') + '">' : '') + '</td>' +
         '<td class="src-line">' + (showLine ? H(r.line) : '') + '</td>' +
-        '<td><input class="cell ' + (S.showColors ? nf : '') + '" data-f="name" value="' + H(nameVal) + '" title="' + H(fl.name || fl.ambig || '') + '"></td>' +
+        '<td>' + (r.added
+          ? rosterSelect(C, r.name, 'class="cell ' + (S.showColors ? nf : '') + '" data-f="name" aria-label="재학생 선택"')
+          : '<input class="cell ' + (S.showColors ? nf : '') + '" data-f="name" value="' + H(nameVal) + '" title="' + H(fl.name || fl.ambig || '') + '">') + '</td>' +
         '<td><input class="cell ' + (fl.date ? 'f-date' : '') + '" data-f="date" value="' + H(r.date ? E.fmtMD(r.date) : '') + '" placeholder="날짜" size="5" title="' + H(fl.date || '') + '"></td>' +
         '<td>' + (r.added ? '<input class="cell" data-f="accuser" aria-label="기소자" placeholder="기소자" value="' + H(r.accuser) + '">' : H(r.accuser)) + '</td>' +
         '<td>' + artSelect(r.art, 'data-f="art"', fl.pts ? 'f-pts' : '', r.user) + '</td>' +
@@ -760,7 +772,15 @@ async function applyBulkEdits(table) {
 }
 function editField(scope, id, f, value) {
   const rows = scopeRows(scope); const r = rows.find(x => x.id === id); if (!r) return;
-  if (f === 'name') { r.name = value.trim(); markEdited(r, 'name'); }
+  if (f === 'name') {
+    if (r.added && !ctx().rosterFull.has(value)) {
+      toast('재학생 명단에서 학생을 선택해 주세요.');
+      render();
+      return;
+    }
+    r.name = value.trim();
+    markEdited(r, 'name');
+  }
   else if (f === 'date') { const d = value.trim() ? E.toDate(value, sundayOf()) : ''; if (value.trim() && !d) { toast('날짜를 10/23 처럼 적어 주세요'); render(); return; } r.date = d; markEdited(r, 'date'); }
   else if (f === 'accuser' && r.added) { r.accuser = value.trim(); markEdited(r, 'accuser'); }
   else if (f === 'art') setArticle(r, value);
@@ -774,15 +794,24 @@ function rowAction(scope, id, act) {
   if (act === 'toggleDuplicate') r.keepDuplicate = !r.keepDuplicate;
   saveScope(scope, rows); render();
 }
-function postAction(scope, pid, group, act) {
+function openAddRow(scope, pid, group) {
+  const C = ctx();
+  if (!C.rosterFull.size) { toast('재학생 명단을 먼저 등록해 주세요.'); return; }
+  S.modal = '<h3>기소 줄 추가</h3><form data-add-row data-scope="' + H(scope) + '" data-pid="' + H(pid) + '" data-group="' + H(group) + '">' +
+    '<label>피기소자' + rosterSelect(C, '', 'name="student" required data-keep="add-row-student"') + '</label>' +
+    '<p class="err" role="alert"></p><div class="foot-row"><button class="ghost" type="button" data-act="mcancel">취소</button>' +
+    '<button class="primary" type="submit">줄 추가</button></div></form>';
+  render();
+}
+function postAction(scope, pid, group, act, student) {
   const rows = scopeRows(scope);
   const key = E.postKey(pid, group);
   const same = rows.filter(r => E.postKey(r.post, E.uploadGroupOf(r)) === key);
-  if (!same.length) return;
+  if (!same.length) { render(); return; }
   if (act === 'addRow') {
     const base = same[same.length - 1];
     const nid = uid();
-    const r = { id: nid, post: String(pid), uploadGroup: group, user: base.user, title: base.title, line: '(직접 추가)', lineNo: 99999, mid: 'add-' + nid, name: '', tok: '',
+    const r = { id: nid, post: String(pid), uploadGroup: group, user: base.user, title: base.title, line: '(직접 추가)', lineNo: 99999, mid: 'add-' + nid, name: student, tok: '',
       date: '', art: '', pts: '', flags: [], accuser: E.accuser(base.user), group: 'add|' + nid, wd: false, src: '', added: true, edited: [],
       order: base.order || 0, seq: (base.seq || 0) + 0.001, unassigned: true, excluded: same.every(row => row.excluded) };
     rows.splice(rows.indexOf(base) + 1, 0, r);
@@ -824,7 +853,8 @@ app.addEventListener('click', async ev => {
     case 'organize': await doOrganize(b.dataset.g); break;
     case 'emptyGroup': await doOrganize(b.dataset.g, true); break;
     case 'del': case 'undel': case 'toggleDuplicate': rowAction(tr.dataset.scope, tr.dataset.id, act); break;
-    case 'addRow': case 'excl': case 'incl': postAction(b.dataset.scope, b.dataset.pid, b.dataset.postGroup, act); break;
+    case 'addRow': openAddRow(b.dataset.scope, b.dataset.pid, b.dataset.postGroup); break;
+    case 'excl': case 'incl': postAction(b.dataset.scope, b.dataset.pid, b.dataset.postGroup, act); break;
     case 'toggleText': { const k = b.dataset.postKey; S.openPosts.has(k) ? S.openPosts.delete(k) : S.openPosts.add(k); render(); break; }
     case 'bulkSelect': selectBulkRows(b.closest('.post'), box => b.hasAttribute('data-review') ? box.dataset.needsReview === '1' : box.dataset.date === b.dataset.date); break;
     case 'bulkApply': await applyBulkEdits(b.closest('[data-bulk-table]')); break;
@@ -878,7 +908,7 @@ app.addEventListener('change', ev => {
 app.addEventListener('input', ev => {
   if(ev.target.id==='directory-search')filterDirectory(app,ev.target.value);
   if(ev.target.closest('#court-meta-form'))updateMetadataPreview();
-  if(ev.target.dataset.manualQuery) M.updatePicker(ev.target.dataset.manualQuery,ev.target.dataset.manualQuery==='v2'?version2.context():ctx());
+  if(ev.target.dataset.manualQuery) M.updatePicker(ev.target.dataset.manualQuery,ctx());
   if(ev.target.id==='v2-search') version2.search(ev.target.value);
   if (ev.target.id === 'paste') { const n = E.parsePasted(ev.target.value).length; const el = document.getElementById('pasteInfo'); if (el) el.textContent = n ? n + '개 글을 읽었습니다' : (ev.target.value.trim() ? '글을 읽지 못했습니다 — 즐겨찾기로 복사한 내용인지 확인하세요' : ''); }
 });
@@ -891,7 +921,38 @@ app.addEventListener('submit', async ev => {
   if(S.role==='chief'&&!S.chiefUnlocked){ev.preventDefault();return;}
   if(ev.target.id==='court-meta-form'){ev.preventDefault();await saveCourtMetadata(Object.fromEntries(new FormData(ev.target)));return;}
 
-  if (ev.target.dataset.manual) { ev.preventDefault(); const prefix=ev.target.dataset.manual; if(S.saving)return; try { const item=M.readForm(prefix,prefix==='v2'?version2.context():ctx()); ev.target.querySelector('[name="date"]').value=E.fmtDate(item.date); if(prefix==='v2') await version2.add(item); else await save(async()=>{ const ex=await store.get('cur/extras')||{items:[],files:[]}; ex.items.push({...item,id:uid()}); await store.set('cur/extras',ex); },'기소를 추가했습니다'); } catch(e) { document.getElementById(prefix+'-error').textContent=e.message; } return; }
+  if (ev.target.hasAttribute('data-add-row')) {
+    ev.preventDefault();
+    const form = ev.target, student = form.elements.student.value;
+    if (!ctx().rosterFull.has(student)) {
+      form.querySelector('[role="alert"]').textContent = '현재 재학생 명단에서 학생을 선택해 주세요.';
+      return;
+    }
+    const {scope, pid, group} = form.dataset;
+    S.modal = null;
+    postAction(scope, pid, group, 'addRow', student);
+    return;
+  }
+  if (ev.target.dataset.manual) {
+    ev.preventDefault();
+    if (S.saving) return;
+    const form = ev.target, prefix = form.dataset.manual;
+    try {
+      const item = M.readForm(prefix, ctx());
+      form.elements.date.value = E.fmtDate(item.date);
+      if (prefix === 'v2') await version2.add(item);
+      else await save(() => store.transaction(async tx => {
+        const refs = await tx.get('cfg/refs'), ex = await tx.get('cur/extras') || {items: [], files: []};
+        const roster = E.makeCtx(refs || {}, sundayOf()).rosterFull;
+        if (!roster.has(item.name)) throw Error('현재 재학생 명단에서 학생을 선택해 주세요.');
+        tx.set('cur/extras', {...ex, items: [...(ex.items || []), {...item, id: uid(), grade: roster.get(item.name)}]});
+      }), '기소를 추가했습니다');
+    } catch (e) {
+      const error = document.getElementById(prefix + '-error');
+      if (error) error.textContent = e.message;
+    }
+    return;
+  }
   if (ev.target.id !== 'login') return; ev.preventDefault();
   const f = new FormData(ev.target); const err = document.getElementById('loginErr');
   localStorage.setItem('cl-email', f.get('email'));
@@ -958,6 +1019,17 @@ async function addPasted() {
 function editExtra(id, f, v) {
   const ex = clone(S.docs.extras); const it = ex.items.find(x => x.id === id); if (!it) return;
   if (f === 'date') { const d = v.trim() ? E.toDate(v, sundayOf()) : ''; if (v.trim() && !d) { toast('날짜를 10/23 처럼 적어 주세요'); render(); return; } it.date = d; }
+  else if (it.src === '직접 입력' && (f === 'name' || f === 'grade')) {
+    const roster = ctx().rosterFull;
+    const name = f === 'name' ? v.trim() : it.name;
+    if (!roster.has(name) || (f === 'grade' && Number(v) !== roster.get(name))) {
+      toast('재학생 명단에 있는 이름과 학년을 입력해 주세요.');
+      render();
+      return;
+    }
+    it.name = name;
+    it.grade = roster.get(name);
+  }
   else if (f === 'grade') it.grade = Number(v) || 0;
   else if (f === 'pts') it.pts = v.trim() === '' ? null : Number(v);
   else it[f] = v.trim();

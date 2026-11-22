@@ -571,7 +571,8 @@ export function refreshEdited(C, r) {
   const e = r.edited;
   if (e.includes('name')) {
     r.flags = r.flags.filter(f => f[0] !== 'name' && f[0] !== 'ambig');
-    const t = vbTrim(r.name); const c = t ? lookup(C, C.nameFix.get(t) || t, 0) : [];
+    const t = vbTrim(r.name);
+    const c = r.added ? (C.rosterFull.has(t) ? [t] : []) : (t ? lookup(C, C.nameFix.get(t) || t, 0) : []);
     if (c.length === 1) r.name = c[0];
     else if (c.length > 1) { r.name = c[0]; r.flags.push(['ambig', "동명이인 '" + t + "' — 기수를 붙여 주세요 (후보: " + c.map(x => displayName(C, x)).join(', ') + ')']); }
     else if (t) r.flags.push(['name', "명단에 없는 이름 '" + t + "'"]);
@@ -704,7 +705,7 @@ function refreshMorningRows(C, saved, mentions) {
 
 export function applySourceRules(C, row) {
   const r = {...row, flags: (row.flags || []).map(f => f.slice())};
-  r.name = canonicalName(r.name || '', C);
+  r.name = r.added ? (r.name || '') : canonicalName(r.name || '', C);
   const oldArt = r.art, normalizedArt = normalizeArticle(oldArt);
   r.art = normalizedArt;
   const edited = new Set(r.edited || []);
@@ -747,6 +748,11 @@ export function compute(C, rowsIn) {
   for (const r of ordered) {
     r.status = r.placeholder ? 'placeholder' : r.deleted ? 'deleted' : (r.excluded || r.sourceSuppressed) ? 'excluded' : (!r.art ? 'unassigned' : 'ok');
     r.note = r.sourceSuppressed ? '괄호 점수 해석 오류로 생성된 추가 행 · 자동 제외' : '';
+    if ((r.status === 'ok' || r.status === 'unassigned') && r.added && !C.rosterFull.has(r.name)) {
+      r.status = 'invalidName';
+      r.note = '재학생 명단에서 피기소자를 다시 선택해 주세요.';
+      r.flags = r.flags.filter(([kind]) => kind !== 'name' && kind !== 'ambig').concat([['name', r.note]]);
+    }
   }
   const live = ordered.filter(r => r.status === 'ok');
   // 중복

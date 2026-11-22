@@ -187,13 +187,26 @@ test('adding a row or excluding a post applies only to the selected group and pr
   { id: 'i', post: '14', user: '곽노재', uploadGroup: '인트라넷', excluded: false },
  ];
  const box = {
-  E, uid: () => 'new-row', scopeRows: () => structuredClone(rows), render() {}, renderLater() {},
+  E, uid: () => 'new-row', scopeRows: () => structuredClone(rows), render() {}, renderLater() {}, toast() {},
+  ctx: () => E.makeCtx({roster: [{name: '가상학생30', grade: 2}, {name: '가상학생31', grade: 1}]}, '2026-11-22'),
   saveScope: (_scope, saved) => { rows = saved; },
  };
  vm.runInNewContext(
   source.slice(source.indexOf('function markEdited('), source.indexOf('function setArticle(')) +
   source.slice(source.indexOf('function editField('), source.indexOf('// ================================================================ 버튼')), box);
- box.postAction('final', '14', '인트라넷', 'addRow');
+ box.postAction('final', '14', '인트라넷', 'addRow', '가상학생31');
+ assert.equal(rows[2].name, '가상학생31');
+ box.editField('final', 'new-row', 'name', '명단밖학생');
+ assert.equal(rows[2].name, '가상학생31');
+ box.editField('final', 'new-row', 'name', '가상학생30');
+ assert.equal(rows[2].name, '가상학생30');
+ const staged = {...rows[2], art: 'Late for school', date: '2026-11-22', pts: 2};
+ assert.equal(E.compute(box.ctx(), [staged]).list.length, 1);
+ for (const name of ['', '가상학생', '명단밖학생']) {
+  const result = E.compute(box.ctx(), [{...staged, name}]);
+  assert.equal(result.list.length, 0);
+  assert.equal(result.rows[0].status, 'invalidName');
+ }
  box.editField('final', 'new-row', 'accuser', ' 별도기소자 ');
  assert.equal(rows[2].uploadGroup, '인트라넷');
  assert.equal(rows[2].accuser, '별도기소자');

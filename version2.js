@@ -10,7 +10,7 @@ export function createVersion2(api){
  let serial=Promise.resolve();
  const normalizeRows=items=>items.map(r=>({...r,art:E.normalizeArticle(r.art)}));
  const live=()=>E.sortRows(rows.filter(r=>!r.deleted));
- function context(){const refs=api.refs(),map=new Map((refs.roster||[]).map(r=>[r.name,r]));for(const r of source?.rows||[])if(!map.has(r.name))map.set(r.name,{name:r.name,grade:r.grade});return E.makeCtx({...refs,roster:[...map.values()]},api.sunday());}
+ function context(){return E.makeCtx(api.refs(),api.sunday());}
  function persist(){const value=source?{buffer,source,rows}:null;serial=serial.catch(()=>{}).then(()=>draftDB(value,true));return serial;}
  async function commit(next){busy=true;try{const old=rows;rows=next;try{await persist();}catch(e){rows=old;throw e;}preview=false;api.render();}finally{busy=false;}}
  function deleteResults(){
@@ -40,5 +40,5 @@ export function createVersion2(api){
   if(act==='v2download'&&preview){if(api.isSaving?.())throw Error('입력 정보 저장이 끝난 뒤 다시 눌러 주세요.');busy=true;const blob=await writeEditedCourt(buffer,source,live(),api.outputInfo?.()||null);const info=api.outputInfo?.();const listNo=info?.listNo||source.listNo||/Court\s+List\s+(\d+)/i.exec(source.sheetXml)?.[1];api.downloadBlob(blob,(listNo?'Court List '+listNo+' Ver.2':source.fileName.replace(/\.(xlsx|xlsm)$/i,'')+' Ver.2')+'.'+(source.macro?'xlsm':'xlsx'));}
  }catch(e){api.toast('처리하지 못했습니다: '+e.message,7000);}finally{busy=false;}}
  draftDB().then(d=>{if(d){source=d.source;buffer=d.buffer;rows=normalizeRows(d.rows);}},e=>api.toast('이 브라우저에서 임시 저장을 사용할 수 없습니다: '+e.message,7000)).finally(()=>{loading=false;api.render();});
- return {view,context,upload,add,action,metadataChanged(){preview=false;},search(value){query=value;const el=document.getElementById('v2-results');if(el)el.innerHTML=deleteResults();}};
+ return {view,upload,add,action,metadataChanged(){preview=false;},search(value){query=value;const el=document.getElementById('v2-results');if(el)el.innerHTML=deleteResults();}};
 }
