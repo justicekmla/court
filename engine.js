@@ -153,6 +153,10 @@ export function cellText(v) { if (v === null || v === undefined) return ''; let 
 export const MORNING_ABSENCE_ARTICLE = 'Violated outdoor regulation(심신수련)';
 const retiredMorningAbsence = /^absent\s+from\s+morning\s+exercise$/i;
 const morningAbsenceKeyword = /(?:평일\s*)?(?:신성(?:\s*\(아침기\))?|아침기(?:\s*\((?:평일\s*)?신성\))?)\s*불참|\babsent\s+from\s+morning\s+exercise\b|\bviolated\s+outdoor\s+regu(?:lation|altion)\s*\(\s*심신수련\s*\)/i;
+const morningTitle = /(?:아침\s*기|심신\s*수련|평일\s*신성).*기소/;
+const morningLate = /(?:(?:평일\s*)?(?:아침\s*기|신성|심신\s*수련)\s*)?지각|\blate\s+for\s+morning\s+exercise\b/i;
+const morningLateArticle = C => C.articleList.find(a => a.toLowerCase() === 'late for morning exercise') || 'Late for morning exercise';
+
 export function normalizeArticle(art) {
   const key = normalize(art).trim();
   return retiredMorningAbsence.test(key) || /^violated\s+outdoor\s+regu(?:lation|altion)\s*\(\s*심신수련\s*\)$/i.test(key)
@@ -335,20 +339,41 @@ export function parsePost(C, p) {
   const poster = p.user;
   let postHint = gradeHint(C, p.title);
   const headerDates = new Map();
-  let curArt = morningAbsenceKeyword.test(normalize(p.title)) ? MORNING_ABSENCE_ARTICLE : '';
+  const title = normalize(p.title);
+  const morning = morningTitle.test(title) || morningAbsenceKeyword.test(title);
+  const titleArticle = !morning ? '' : morningLate.test(title) ? morningLateArticle(C) : MORNING_ABSENCE_ARTICLE;
+  let curArt = titleArticle, datedArticle = false;
   let curFixed, curStated, curMo = 0, curDy = 0, curWd = false;
   const postWd = p.title.includes('취하');
   const pending = [], local = [];
   const lines = normalize(p.text).split('\n');
-  for (let i = 0; i < lines.length; i++) {
-    const ln = vbTrim(lines[i]); if (!ln) continue;
+  const segments = lines.flatMap((raw, i) => {
+    const line = vbTrim(raw);
+    if (!line) return [];
+    // Treat a bracketed date at the start as a heading, but keep student annotations.
+    const body = line.replace(/^([•*-]\s*)?[(\[]\s*(\d{1,2}(?:\s*\/\s*|\.)\d{1,2}|\d{1,2}\s*월\s*\d{1,2}\s*일)\s*[)\]]/, '$1$2');
+    // Use original offsets when splitting a line containing several dated groups.
+    const offsets = findDates(body.replace(/\([^()]*\)/g, note => ' '.repeat(note.length))).map(([start]) => start - 1);
+    const separate = offsets.length > 1 && offsets.slice(1).every((end, k) =>
+      words(body.slice(offsets[k], end)).some(([word]) => isKnown(C, word)));
+    if (!separate) return [{ ln: body, line, i }];
+    return offsets.map((start, k) => ({ ln: body.slice(k === 0 ? 0 : start, offsets[k + 1]).trim(), line, i, split: true }));
+  });
+  for (const { ln, line, i, split } of segments) {
     const g = gradeHint(C, ln); if (g > 0) postHint = g;
     const per = new Map();
     const maleCurfew = groupOf(poster) === '남사감' && (/통금\s*위반/.test(ln) || (!findArticle(C, ln, poster).art && curArt.toLowerCase() === 'violated curfew regulation'));
     // Parenthesized names are separate 3-point defendants, not annotations.
     const expanded = maleCurfew ? ln.replace(/\(([^()]*)\)/g, (whole, inner) => words(inner).some(([w]) => isKnown(C,w)) ? ' ' + inner + ' ' : whole) : ln;
     const line2 = grabParens(C, expanded.replace(morningAbsenceKeyword, keyword => keyword.endsWith('불참') ? stripParens(keyword) : keyword), per, poster);
-    const { art, fixed, kw } = findArticle(C, line2, poster);
+    let article = findArticle(C, line2, poster);
+    if (morning || groupOf(poster) === '아침기') {
+      const plain = stripParens(line2);
+      const late = morningLate.exec(plain);
+      if (late) article = { art: morningLateArticle(C), fixed: undefined, kw: late[0] };
+      else if (!article.art && /불참|결석/.test(plain)) article = { art: MORNING_ABSENCE_ARTICLE, fixed: undefined, kw: plain.match(/불참|결석/)[0] };
+    }
+    const { art, fixed, kw } = article;
     let stated; if (art) { const k = numBefore(line2, '점'); if (k > 0) stated = k; }
     const rep = repCount(line2);
     const noParen = stripParens(line2);
@@ -360,7 +385,12 @@ export function parsePost(C, p) {
     const isList = known > 0 && known >= 0.5 * cands.length;
     const names = cands.filter(t => isKnown(C, t) || (isList && isPureHangul24(t) && !isNonName(C, t)));
     const lineWd = ln.includes('취하');
+    const leadingDate = ds.length > 0 && (!names.length || !words(noParen.slice(0, ds[0][0] - 1)).some(([word]) => names.includes(word)));
+    if (leadingDate && datedArticle && (ds[0][2] !== curMo || ds[0][3] !== curDy)) {
+      curArt = titleArticle; curFixed = undefined; curStated = undefined; curWd = false; datedArticle = false;
+    }
     if (art) {
+      datedArticle = morning && (leadingDate || (names.length > 0 && curMo > 0));
       curArt = art; curFixed = fixed; curStated = stated; curWd = lineWd;
       for (const x of pending) { x.art = art; x.fixed = fixed; x.stated = stated; x.rep = rep; if (lineWd) x.wd = true; }
       pending.length = 0;
@@ -368,7 +398,10 @@ export function parsePost(C, p) {
     let lineMo = 0, lineDy = 0;
     if (ds.length > 0) {
       lineMo = ds[0][2]; lineDy = ds[0][3];
-      if (names.length === 0) { curMo = lineMo; curDy = lineDy; headerDates.set(lineMo + '/' + lineDy, [lineMo, lineDy]); }
+      if (leadingDate) {
+        curMo = lineMo; curDy = lineDy;
+        headerDates.set(lineMo + '/' + lineDy, [lineMo, lineDy]);
+      }
     }
     for (const t of names) {
       let hint = postHint, mult = 1, ptsOv;
@@ -382,14 +415,14 @@ export function parsePost(C, p) {
       }
       for (const dd of dts) {
         const x = { tok: t, hint, art: curArt, fixed: curFixed, stated: curStated, rep, mult, ptsOv, mo: dd[0], dy: dd[1], src: '',
-          post: String(p.id), postDate: p.date, user: poster, line: ln, group: p.id + '|' + i, lineNo: i + 1, title: p.title,
+          post: String(p.id), postDate: p.date, user: poster, line, ...(split ? { segment: ln } : {}), group: p.id + '|' + i, lineNo: i + 1, title: p.title,
           wd: postWd || curWd || lineWd };
         if (curArt === '') pending.push(x);
         local.push(x);
       }
     }
   }
-  if (headerDates.size === 1) { const hd = [...headerDates.values()][0]; for (const x of local) if (x.mo === 0) { x.mo = hd[0]; x.dy = hd[1]; } }
+  if (!morning && headerDates.size === 1) { const hd = [...headerDates.values()][0]; for (const x of local) if (x.mo === 0) { x.mo = hd[0]; x.dy = hd[1]; } }
   return local; // art === '' → 기소 항목을 찾지 못한 이름
 }
 
@@ -480,7 +513,7 @@ export function mentionsToRows(C, mentions, midStart = 0) {
     }
     const n = art ? m.rep * mult : 1;
     for (let k = 0; k < n; k++) {
-      rows.push({ name: nm, ambig, tok, date: d, art, pts, flags: flags.map(f => f.slice()), accuser: accuser(m.user), post: m.post, line: m.line,
+      rows.push({ name: nm, ambig, tok, date: d, art, pts, flags: flags.map(f => f.slice()), accuser: accuser(m.user), post: m.post, line: m.line, ...(m.segment ? { segment: m.segment } : {}),
         dateDefaulted: m.src !== 'file' && groupOf(m.user) === '여사감' && !m.mo, group: m.group, mid: mid_, wd: !!m.wd, src: m.src, user: m.user, lineNo: m.lineNo, title: m.title || '', unassigned: !art });
     }
   }
@@ -556,7 +589,11 @@ export function expandSourceRows(C, input) {
     const siblings = rows.filter(r => String(r.post) === String(p.id) && !r.added && r.src !== 'file');
     if (!siblings.length && !C.restoreMissingNames) continue;
     if (C.restoreMissingNames && (!p.date || p.date < addDays(C.baseDate,-6) || p.date > C.baseDate)) continue;
-    const mentions = parsePost(C, p).filter(m => canonicalName(baseName(m.tok), C).length > 4 && isKnown(C, m.tok));
+    const parsed = parsePost(C, p);
+    if (morningTitle.test(normalize(p.title)) || morningAbsenceKeyword.test(normalize(p.title))) {
+      refreshMorningRows(C, siblings, parsed);
+    }
+    const mentions = parsed.filter(m => canonicalName(baseName(m.tok), C).length > 4 && isKnown(C, m.tok));
     for (let i=0; i<mentions.length; i++) {
       const m=mentions[i];
       if (rows.some(r => String(r.post)===String(p.id) && r.group===m.group && canonicalName(baseName(r.tok || r.name), C)===canonicalName(baseName(m.tok), C))) continue;
@@ -588,9 +625,10 @@ function repairPersonalPoints(C, input) {
   const rows = input.map(row => {
     const r = {...row}; delete r.sourceSuppressed;
     if (r.src === 'file' || r.added || r.placeholder || r.mid == null || !/\([^()]*\d+\s*점[^()]*\)/.test(r.line || '') || /^violated curfew regulation$/i.test(r.art || '')) return r;
-    const key = JSON.stringify([r.post, r.user, r.lineNo, r.line, r.art]);
+    const line = r.segment || r.line;
+    const key = JSON.stringify([r.post, r.user, r.lineNo, line, r.art]);
     if (!cache.has(key)) {
-      const mentions = parsePost(C, {id:r.post, user:r.user, title:'', date:r.date || C.baseDate, text:r.line});
+      const mentions = parsePost(C, {id:r.post, user:r.user, title:'', date:r.date || C.baseDate, text:line});
       for (const m of mentions) if (!m.art) m.art = r.art;
       cache.set(key, mentions);
     }
@@ -619,6 +657,36 @@ function repairPersonalPoints(C, input) {
   }
   return rows;
 }
+function refreshMorningRows(C, saved, mentions) {
+  const source = new Map();
+  for (const r of mentionsToRows(C, mentions).rows) {
+    const key = JSON.stringify([r.lineNo, r.line, r.tok]);
+    if (!source.has(key)) source.set(key, new Map());
+    source.get(key).set(JSON.stringify([r.date, r.art, r.pts]), r);
+  }
+  for (const r of saved) {
+    const matches = source.get(JSON.stringify([r.lineNo, r.line, r.tok]));
+    if (r.placeholder || matches?.size !== 1) continue;
+    const [match] = matches.values();
+    if (match.segment) r.segment = match.segment;
+    const edited = new Set(r.edited || []);
+    const flags = r.flags || [];
+    if (!edited.has('date')) {
+      r.date = match.date;
+      r.flags = flags.filter(f => f[0] !== 'date').concat(match.flags.filter(f => f[0] === 'date'));
+    }
+    if (!edited.has('art') && match.art &&
+        (!r.art || (/^late for school(?: 7)?$/i.test(r.art) && match.art === morningLateArticle(C)))) {
+      r.art = match.art;
+      r.unassigned = false;
+      if (!edited.has('pts')) {
+        r.pts = match.pts;
+        r.flags = (r.flags || []).filter(f => f[0] !== 'pts').concat(match.flags.filter(f => f[0] === 'pts'));
+      }
+    }
+  }
+}
+
 export function applySourceRules(C, row) {
   const r = {...row, flags: (row.flags || []).map(f => f.slice())};
   r.name = canonicalName(r.name || '', C);
@@ -627,11 +695,12 @@ export function applySourceRules(C, row) {
   const edited = new Set(r.edited || []);
   if (r.src === 'file' || r.added || r.placeholder) return r;
   const male = groupOf(r.user) === '남사감';
-  if (male && !edited.has('art') && /신성\s*지각/.test(r.line || '')) {
+  const line = r.segment || r.line || '';
+  if (male && !edited.has('art') && /신성\s*지각/.test(line)) {
     r.art = C.articleList.find(a => a.toLowerCase() === 'late for morning exercise') || 'late for morning exercise';
     if (!edited.has('pts')) { const pts = C.artPoints.get(r.art); if (typeof pts === 'number') r.pts = pts; }
   }
-  if (!edited.has('art') && morningAbsenceKeyword.test(r.line || '') && r.art !== MORNING_ABSENCE_ARTICLE) {
+  if (!edited.has('art') && morningAbsenceKeyword.test(line) && r.art !== MORNING_ABSENCE_ARTICLE) {
     r.art = MORNING_ABSENCE_ARTICLE;
   }
   if (r.art === MORNING_ABSENCE_ARTICLE && !edited.has('art') && !edited.has('pts') &&
@@ -642,11 +711,11 @@ export function applySourceRules(C, row) {
       r.flags = r.flags.filter(f => f[0] !== 'pts');
     }
   }
-  if (male && !edited.has('art') && /지각/.test(r.line || '') && !/신성\s*지각/.test(r.line || '') && /^late for school(?: 7)?$/i.test(r.art || '')) {
+  if (male && !edited.has('art') && /지각/.test(line) && !/신성\s*지각/.test(line) && /^late for school(?: 7)?$/i.test(r.art || '')) {
     r.art = C.articleList.find(a => a.toLowerCase() === 'late for school 7') || 'Late for school 7';
     if (!edited.has('pts')) { const pts = C.artPoints.get(r.art); if (typeof pts === 'number') r.pts = pts; }
   }
-  if (male && !edited.has('pts') && /^violated curfew regulation$/i.test(r.art || '')) r.pts = curfewPoints(r.line, r.tok || r.name);
+  if (male && !edited.has('pts') && /^violated curfew regulation$/i.test(r.art || '')) r.pts = curfewPoints(line, r.tok || r.name);
   if (groupOf(r.user) === '여사감' && !edited.has('date') && (!r.date || r.dateDefaulted)) {
     r.date = C.femaleDefaultDate || C.baseDate;
     r.flags = r.flags.filter(f => f[0] !== 'date');

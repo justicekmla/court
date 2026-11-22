@@ -3,10 +3,10 @@ import * as CM from './court-meta.js?v=titles-20261108-4';
 import * as Roster from './roster.js?v=semester-20261107-1';
 import {verifyChiefPassword,parseChiefSetup,validChiefVerifier} from './chief-auth.js?v=semester-20261107-1';
 import { sourceStamp, rowsForGroup, combinedRows, currentStamps as stampsForGroups, reviewSnapshotMatches } from './review.js?v=upload-groups-20261115-1';
-import * as E from './engine.js?v=morning-absence-20261118';
-import * as M from './manual.js?v=morning-absence-20261118';
-import { createVersion2 } from './version2.js?v=morning-absence-20261118';
-import * as IO from './io.js?v=morning-absence-20261118';
+import * as E from './engine.js?v=morning-review-20261122';
+import * as M from './manual.js?v=morning-review-20261122';
+import { createVersion2 } from './version2.js?v=morning-review-20261122';
+import * as IO from './io.js?v=morning-review-20261122';
 import { firebaseStore, localStore } from './store.js?v=uploads-20261101-1';
 
 // ================================================================ 공통
@@ -122,6 +122,7 @@ function render() {
   else body = viewMember();
   app.innerHTML = topbar() + '<main id="main">' + body + '</main>' + (S.modal ? '<div class="modal-bg"><div class="modal">' + S.modal + '</div></div>' : '');
   for (const el of app.querySelectorAll('[data-keep]')) if (el.dataset.keep in keep && !S.resetKeep && !(S.metaResetKeep && el.dataset.keep.startsWith('meta-'))) { if (el.type === 'checkbox') el.checked = keep[el.dataset.keep]; else el.value = keep[el.dataset.keep]; }
+  for (const table of app.querySelectorAll('[data-bulk-table]')) updateBulkControls(table);
   for (const key of openUploads) { const el = app.querySelector('details[data-upload="' + key + '"]'); if (el) el.open = true; }
   for (const prefix of ['v1','v2']) M.updatePicker(prefix, prefix==='v2' && version2 ? version2.context() : ctx(), true);
   for(const prefix of ['v1','v2']) { const el=document.getElementById(prefix+'-person'); if(el && keep[prefix+'-person'] && !S.resetKeep) el.value=keep[prefix+'-person']; }
@@ -483,20 +484,34 @@ function rowsTable(rows, sm, opt) {
   for (const r of rows) { if (!by.has(r.post)) { by.set(r.post, []); order.push(r.post); } by.get(r.post).push(r); }
   if (!order.length) return '<p class="muted">이 담당에 해당하는 글이 없습니다.</p>';
   order.sort((x, y) => (parseFloat(x) || 0) - (parseFloat(y) || 0));
-  return order.map(pid => {
+  const bulkKey = opt.scope + '-' + rows[0].id;
+  return '<div data-bulk-table="' + opt.scope + '">' +
+    '<div class="bulk-tools row-inline"><label><input type="checkbox" data-bulk-all> 전체 선택</label>' +
+    '<span class="muted small" data-bulk-count aria-live="polite">0건 선택</span>' +
+    '<label>날짜 <input type="date" data-bulk-date data-keep="' + H(bulkKey) + '-date"></label>' +
+    '<label>기소 항목 ' + artSelect('', 'data-bulk-art data-keep="' + H(bulkKey) + '-art"') + '</label>' +
+    '<button class="outline small" data-act="bulkApply" disabled>선택한 행에 적용</button></div>' + order.map(pid => {
     const p = P.get(String(pid)) || { id: pid, title: '', user: '', date: '', text: '' };
     const list = by.get(pid).slice().sort((a, b) => (a.lineNo || 0) - (b.lineNo || 0) || (a.seq || 0) - (b.seq || 0));
     const excl = list.some(r => r.excluded);
     const real = list.filter(r => !r.placeholder);
-    let lastLine = null;
+    const dateCounts = new Map();
+    let needsReview = 0, lastLine = null;
     const trs = real.map(saved => {
       const c = sm.get(saved.id) || saved; const r = c; const fl = kinds(c);
       const gray = ['dup', 'withdrawn', 'excluded', 'deleted'].includes(c.status);
+      const selectable = !['deleted', 'excluded', 'withdrawn'].includes(c.status);
+      const missing = !r.date || !r.art || !!fl.date;
+      if (selectable) {
+        dateCounts.set(r.date, (dateCounts.get(r.date) || 0) + 1);
+        if (missing) needsReview++;
+      }
       const showLine = r.lineNo !== lastLine; lastLine = r.lineNo;
       const nameVal = r.edited && r.edited.includes('name') ? r.name : (C.rosterFull.has(r.name) ? E.displayName(C, r.name) : (r.name || r.tok));
       const ptsVal = r.art || (r.edited && r.edited.includes('pts')) ? r.pts : '';
       const nf = fl.name ? 'f-name' : fl.ambig ? 'f-ambig' : '';
       return '<tr data-id="' + H(r.id) + '" data-scope="' + opt.scope + '" class="' + (gray ? 'st-dup' : '') + (c.status === 'deleted' ? ' st-del' : '') + '">' +
+        '<td>' + (selectable ? '<input type="checkbox" data-bulk-row data-date="' + H(r.date || '') + '" data-needs-review="' + Number(missing) + '" data-keep="bulk-' + opt.scope + '-' + H(r.id) + '" aria-label="' + H((nameVal || '이 행') + ' 선택') + '">' : '') + '</td>' +
         '<td class="src-line">' + (showLine ? H(r.line) : '') + '</td>' +
         '<td><input class="cell ' + (S.showColors ? nf : '') + '" data-f="name" value="' + H(nameVal) + '" title="' + H(fl.name || fl.ambig || '') + '"></td>' +
         '<td><input class="cell ' + (fl.date ? 'f-date' : '') + '" data-f="date" value="' + H(r.date ? E.fmtMD(r.date) : '') + '" placeholder="날짜" size="5" title="' + H(fl.date || '') + '"></td>' +
@@ -506,14 +521,18 @@ function rowsTable(rows, sm, opt) {
         '<td>' + (c.status === 'deleted' ? '<button class="icon" data-act="undel" title="되살리기">↺</button>' : '<button class="icon" data-act="del" title="이 줄 지우기">✕</button>') + '</td></tr>';
     }).join('');
     const open = S.openPosts.has(String(pid));
+    const dateButtons = [...dateCounts].filter(([date]) => date).map(([date, count]) =>
+      '<button class="outline small" data-act="bulkSelect" data-date="' + H(date) + '" title="' + H(E.fmtMD(date) + ' 날짜의 행 선택') + '">' + H(E.fmtMD(date)) + ' · ' + count + '건</button>');
+    if (needsReview) dateButtons.push('<button class="outline small" data-act="bulkSelect" data-review>확인 필요 · ' + needsReview + '건</button>');
     return '<section class="post' + (excl ? ' excl' : '') + '"><div class="post-h"><span class="pid">글 ' + H(p.id) + '</span><b>' + H(p.title) + '</b><span class="muted small">' + H(p.user) + ' · ' + E.fmtMD(p.date) + ' ' + H((p.time || '').slice(0, 5)) + '</span>' +
       (excl ? '<span class="b gray">제외: ' + H(p.markNote || '') + '</span>' : '') + '<span class="grow"></span>' +
       '<button class="ghost small" data-act="toggleText" data-pid="' + H(pid) + '">' + (open ? '원문 닫기' : '원문 전체') + '</button>' +
       '<button class="ghost small" data-act="' + (excl ? 'incl' : 'excl') + '" data-pid="' + H(pid) + '" data-scope="' + opt.scope + '">' + (excl ? '이 글 넣기' : '이 글 빼기') + '</button></div>' +
       (open ? '<pre class="fulltext">' + H(E.normalize(p.text || '')) + '</pre>' : '') +
-      (real.length ? '<div class="tablewrap"><table class="grid edit"><colgroup><col class="c-line"><col class="c-name"><col class="c-date"><col class="c-art"><col class="c-pts"><col class="c-st"><col class="c-x"></colgroup><thead><tr><th>원문 줄</th><th>이름</th><th>날짜</th><th>기소 항목</th><th>점수</th><th>상태</th><th></th></tr></thead><tbody>' + trs + '</tbody></table></div>' : '<p class="muted small none">(뽑힌 항목 없음 — 원문 전체를 확인하세요)</p>') +
+      (dateButtons.length ? '<div class="row-inline bulk-dates">' + dateButtons.join('') + '</div>' : '') +
+      (real.length ? '<div class="tablewrap"><table class="grid edit"><colgroup><col style="width:36px"><col class="c-line"><col class="c-name"><col class="c-date"><col class="c-art"><col class="c-pts"><col class="c-st"><col class="c-x"></colgroup><thead><tr><th>선택</th><th>원문 줄</th><th>이름</th><th>날짜</th><th>기소 항목</th><th>점수</th><th>상태</th><th></th></tr></thead><tbody>' + trs + '</tbody></table></div>' : '<p class="muted small none">(뽑힌 항목 없음 — 원문 전체를 확인하세요)</p>') +
       '<button class="ghost small add" data-act="addRow" data-pid="' + H(pid) + '" data-scope="' + opt.scope + '">+ 줄 추가</button></section>';
-  }).join('');
+  }).join('') + '</div>';
 }
 
 // ================================================================ 고치기 (부원: 내 담당 draft / 부장: final)
@@ -545,7 +564,7 @@ async function flushGroupWrites() {
 async function saveDraft() {
   if (!S.group || gdoc(S.group)?.done) return;
   // Clicking blurs the active cell first, so its change handler joins the queue.
-  const rows = clone(working(S.group));
+  const rows = scopeRows('group');
   const ok = await saveScope('group', rows);
   if (ok) { toast('임시저장 완료 · 다시 들어와 이어서 할 수 있습니다', 4500); render(); }
 }
@@ -556,11 +575,64 @@ function defaultPts(art) {
   return Number(b);
 }
 function markEdited(r, f) { r.edited = Array.from(new Set([...(r.edited || []), f])); }
+function setArticle(r, value) {
+  r.art = value;
+  markEdited(r, 'art');
+  if (!(r.edited || []).includes('pts')) r.pts = defaultPts(value);
+  r.unassigned = !value;
+}
+function updateBulkControls(table) {
+  const boxes = [...table.querySelectorAll('[data-bulk-row]')];
+  const checked = boxes.filter(box => box.checked).length;
+  const all = table.querySelector('[data-bulk-all]');
+  all.disabled = boxes.length === 0;
+  all.checked = checked > 0 && checked === boxes.length;
+  all.indeterminate = checked > 0 && checked < boxes.length;
+  table.querySelector('[data-bulk-count]').textContent = checked + '건 선택';
+  table.querySelector('[data-act="bulkApply"]').disabled = checked === 0;
+}
+function selectBulkRows(root, predicate) {
+  const boxes = [...root.querySelectorAll('[data-bulk-row]')].filter(predicate);
+  const select = boxes.some(box => !box.checked);
+  for (const box of boxes) box.checked = select;
+  updateBulkControls(root.closest('[data-bulk-table]'));
+}
+async function applyBulkEdits(table) {
+  if (S.saving) return;
+  const scope = table.dataset.bulkTable;
+  const dateInput = table.querySelector('[data-bulk-date]');
+  const date = dateInput.value, art = table.querySelector('[data-bulk-art]').value;
+  if (!dateInput.validity.valid || (!date && !art)) {
+    toast('적용할 날짜나 기소 항목을 입력해 주세요.');
+    return;
+  }
+  const boxes = [...table.querySelectorAll('[data-bulk-row]:checked')];
+  const ids = new Set(boxes.map(box => box.closest('tr').dataset.id));
+  const rows = scopeRows(scope);
+  const selected = rows.filter(r => ids.has(r.id) && !r.deleted && !r.excluded && !r.sourceSuppressed);
+  if (selected.length !== ids.size || !selected.length) {
+    toast('자료가 변경되었습니다. 행을 다시 선택해 주세요.');
+    render();
+    return;
+  }
+  for (const r of selected) {
+    if (date) { r.date = date; markEdited(r, 'date'); }
+    if (art) setArticle(r, art);
+  }
+  if (await saveScope(scope, rows)) {
+    for (const box of app.querySelectorAll('[data-bulk-row]:checked')) {
+      const row = box.closest('tr');
+      if (row.dataset.scope === scope && ids.has(row.dataset.id)) box.checked = false;
+    }
+    toast(selected.length + '건을 수정했습니다.');
+  }
+  render();
+}
 function editField(scope, id, f, value) {
   const rows = scopeRows(scope); const r = rows.find(x => x.id === id); if (!r) return;
   if (f === 'name') { r.name = value.trim(); markEdited(r, 'name'); }
   else if (f === 'date') { const d = value.trim() ? E.toDate(value, sundayOf()) : ''; if (value.trim() && !d) { toast('날짜를 10/23 처럼 적어 주세요'); render(); return; } r.date = d; markEdited(r, 'date'); }
-  else if (f === 'art') { r.art = value; markEdited(r, 'art'); if (!(r.edited || []).includes('pts')) r.pts = defaultPts(value); r.unassigned = !value; }
+  else if (f === 'art') setArticle(r, value);
   else if (f === 'pts') { r.pts = value === '' ? 0 : Number(value); markEdited(r, 'pts'); }
   saveScope(scope, rows); renderLater();
 }
@@ -622,13 +694,15 @@ app.addEventListener('click', async ev => {
     case 'del': case 'undel': case 'toggleDuplicate': rowAction(tr.dataset.scope, tr.dataset.id, act); break;
     case 'addRow': case 'excl': case 'incl': postAction(b.dataset.scope, b.dataset.pid, act); break;
     case 'toggleText': { const k = String(b.dataset.pid); S.openPosts.has(k) ? S.openPosts.delete(k) : S.openPosts.add(k); render(); break; }
+    case 'bulkSelect': selectBulkRows(b.closest('.post'), box => b.hasAttribute('data-review') ? box.dataset.needsReview === '1' : box.dataset.date === b.dataset.date); break;
+    case 'bulkApply': await applyBulkEdits(b.closest('[data-bulk-table]')); break;
     case 'saveDraft': await saveDraft(); break;
     case 'memberDone': if (!(await flushGroupWrites())) break; confirmBox('크로스체킹을 마칠까요?', '<b>' + H(S.group) + '</b>의 수정 내용이 통합 정리본에 반영되고, 이후에는 고칠 수 없습니다.', '완료', async () => {
       const k = 'cur/g_' + GKEY[S.group]; const d = gdoc(S.group);
       await save(() => store.transaction(async tx => {
         const latest = await tx.get(k);
         if (!latest || (latest.revision || '') !== S.editRevision) throw Error('새 글이 추가되었습니다. 새로고침 후 확인해 주세요.');
-        tx.set(k, { ...latest, rows: latest.draft || latest.rows, draft: null, done: true, doneAt: new Date().toISOString() });
+        tx.set(k, { ...latest, rows: E.expandSourceRows(ctx(), latest.draft || latest.rows), draft: null, done: true, doneAt: new Date().toISOString() });
       }));
     }); break;
     case 'reopen': confirmBox(b.dataset.g + ' 다시 열기', '이 담당을 다시 고칠 수 있게 엽니다. 크로스체크 단계로 돌아가며, <b>완성 정리본·법정리스트 화면에서 법무부장이 직접 고친 내용은 지워집니다</b> (추가 기소는 남습니다).', '다시 열기', async () => {
@@ -656,6 +730,13 @@ app.addEventListener('change', ev => {
   const t = ev.target;
   if(t.closest('#court-meta-form')) { saveCourtMetadata({[t.name]:t.value}); return; }
   if(t.name==='date' && t.closest('[data-manual]')) { const d=/^202\d\.\d{1,2}\.\d{1,2}$/.test(t.value.trim())?E.toDate(t.value,sundayOf()):''; if(d)t.value=E.fmtDate(d); }
+  if (t.matches('[data-bulk-all]')) {
+    const table = t.closest('[data-bulk-table]');
+    for (const box of table.querySelectorAll('[data-bulk-row]')) box.checked = t.checked;
+    updateBulkControls(table);
+    return;
+  }
+  if (t.matches('[data-bulk-row]')) { updateBulkControls(t.closest('[data-bulk-table]')); return; }
   if (t.dataset.f) { const tr = t.closest('tr[data-id]'); editField(tr.dataset.scope, tr.dataset.id, t.dataset.f, t.value); return; }
   if (t.dataset.xf) { editExtra(t.closest('tr').dataset.xid, t.dataset.xf, t.value); return; }
   if (t.dataset.file) { handleFiles(t.dataset.file, t.files); t.value = ''; return; }

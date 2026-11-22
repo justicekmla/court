@@ -102,8 +102,12 @@ table.grid th, table.grid td { border: 1px solid var(--line2); padding: 3px 5px;
 table.grid th { background: #f4f6f9; font-weight: 600; font-size: 12.5px; color: #475467; position: sticky; top: 0; }
 table.grid.compact { width: auto; margin: 10px auto; } table.grid.compact td.num { text-align: right; }
 .panel.center table.grid.compact td { text-align: left; }
+.bulk-tools { margin: 12px 0; }
+.bulk-tools label { display: inline-flex; flex-direction: row; align-items: center; gap: 6px; }
+.bulk-tools select { width: auto; max-width: min(280px, 60vw); }
+.bulk-dates { margin: 6px 0; }
 table.edit { table-layout: fixed; min-width: 860px; }
-col.c-line { width: 33%; } col.c-name { width: 11%; } col.c-date { width: 7%; } col.c-art { width: 25%; } col.c-pts { width: 7%; } col.c-st { width: 14%; } col.c-x { width: 3%; }
+col.c-line { width: 29%; } col.c-name { width: 11%; } col.c-date { width: 7%; } col.c-art { width: 25%; } col.c-pts { width: 7%; } col.c-st { width: 14%; } col.c-x { width: 3%; }
 td.src-line { font-size: 12.5px; color: #3b4352; white-space: pre-wrap; word-break: break-all; background: #fbfbfc; }
 .cell { width: 100%; border: 1px solid transparent; border-radius: 4px; padding: 3px 5px; background: transparent; min-width: 0; }
 .cell:hover { border-color: var(--line); background: #fff; }
