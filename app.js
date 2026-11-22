@@ -407,6 +407,7 @@ function viewExtras() {
   return steps(3) + '<div class="panel"><div class="head-row"><h2>추가 기소</h2><span class="muted">선도부·법무부·식품영양부 등에서 받은 파일, 메신저·종이로 받은 기소를 넣습니다</span><span class="grow"></span>' +
     '<button class="ghost" data-act="backFinal">← 완성 정리본</button><button class="primary" data-act="toList">추가 기소 반영 완료 →</button></div>' +
     '<div class="two"><div><h3>부서 엑셀 파일</h3>' + dropZone('dept', '엑셀 파일(.xlsx)을 여기에 끌어다 놓거나 눌러서 고르세요 · 여러 개 가능', true) +
+    '<p class="muted small">국침기, 선도부, 식영부, 태권도 파일, 법정 Violation 첨부</p>' +
     '<p class="muted small">노란색으로 칠한 줄이 있는 파일(법정 좌석표)은 노란 줄만, 없으면 모든 줄을 가져옵니다.</p>' +
     (files.length ? '<ul class="files">' + files.map((f, i) => '<li><b>' + H(f.name) + '</b> · ' + f.count + '건' + (f.yellowOnly ? ' (노란 줄만)' : '') + ' <button class="icon" data-act="fdel" data-i="' + i + '" title="이 파일 빼기">✕</button></li>').join('') + '</ul>' : '') + '</div>' +
     '<div><h3>직접 입력</h3>' + M.form('v1') + '</div></div>' +
