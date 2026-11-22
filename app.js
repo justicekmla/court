@@ -46,7 +46,7 @@ async function save(fn, okMsg) {
 function renderSaving() {
   const el = document.getElementById('saving');
   if (el) el.textContent = S.saving ? '저장 중…' : '저장됨';
-  for (const button of app.querySelectorAll('[data-act="reviewApprove"], [data-act="organize"]')) button.disabled = S.saving > 0;
+  for (const button of app.querySelectorAll('[data-act="reviewApprove"], [data-act="organize"], [data-act="emptyGroup"]')) button.disabled = S.saving > 0;
   for(const button of app.querySelectorAll('#court-meta-form button[type="submit"], [data-act="rosterApply"], [data-act="councilSave"], [data-act="councilAdd"], [data-act="councilRemove"]'))button.disabled=S.saving>0;
   for (const button of app.querySelectorAll('[data-act="toExtras"]')) button.disabled = S.saving > 0 || !chiefApproved();
 }
@@ -248,10 +248,11 @@ function copyInstructions() {
   return '<p><a class="outline install-link" href="help.html" target="_blank" rel="noopener">법정글 복사 설치·사용법</a></p>' +
     '<p class="muted">인트라넷 법정게시판에서 즐겨찾기 <b>법정글 복사</b>를 실행하세요. 담당 글에 체크한 뒤 <b>선택한 글 가져오기 → 복사하기</b>를 누르고 이 사이트의 담당 업무 칸에 붙여넣으세요.</p>';
 }
-function memberPasteFields(group) {
+function memberPasteFields(group, hasUpload) {
   const id = 'paste-' + GKEY[group];
   return '<label>' + H(group) + ' 글 붙여넣기<textarea id="' + id + '" class="paste" placeholder="복사한 법정글을 여기에 붙여넣으세요" data-keep="member-' + id + '"></textarea></label>' +
-    '<button class="primary" data-act="organize" data-g="' + group + '"' + (S.saving ? ' disabled' : '') + '>등록하고 크로스체크</button>';
+    '<div class="row-inline"><button class="primary" data-act="organize" data-g="' + group + '"' + (S.saving ? ' disabled' : '') + '>등록하고 크로스체크</button>' +
+    (hasUpload ? '' : '<button class="outline" data-act="emptyGroup" data-g="' + group + '"' + (S.saving ? ' disabled' : '') + '>이번 주 해당 글 없음</button>') + '</div>';
 }
 function viewPaste() {
   const sun = sundayOf();
@@ -270,10 +271,14 @@ function viewPaste() {
 async function doOrganize(group, empty = false) {
   const member = S.role === 'member';
   if (S.saving || !Object.hasOwn(GKEY, group) ||
-      !(member ? group === S.group && !empty : S.role === 'chief' && S.chiefUnlocked)) return;
+      !(member ? group === S.group : S.role === 'chief' && S.chiefUnlocked)) return;
   const input = document.getElementById('paste-' + GKEY[group]);
   if (!empty && !input) return;
   const submitted = input?.value;
+  if (member && empty && submitted?.trim()) {
+    toast('붙여넣은 글이 있어요. 글을 등록하거나 입력 칸을 비워 주세요.', 5000);
+    return;
+  }
   const sunday = (member ? '' : document.getElementById('sunday')?.value) || sundayOf();
   const posts = empty ? [] : E.parsePasted(submitted).map(post => ({ ...post, uploadGroup: group }));
   if (!empty && !posts.length) { toast('붙여넣은 글을 읽지 못했습니다.', 5000); return; }
@@ -281,7 +286,7 @@ async function doOrganize(group, empty = false) {
   const wk = E.extractWeek(Object.assign(E.makeCtx(S.docs.refs, sunday), {femaleDefaultDate: st().courtMeta?.courtDate || sunday}), posts, monday, sunday);
   if (!empty && !wk.posts.length) { toast('표시된 주간에 올라온 글이 없습니다. 게시일을 확인해 주세요.', 5000); return; }
   await save(async () => {
-    if (member) {
+    if (member && !empty) {
       const pending = groupWrites.get(group);
       if (pending?.revision === (gdoc(group)?.revision || '') && !(await pending.task)) {
         throw Error('이전 수정 내용을 저장한 뒤 글을 추가해 주세요.');
@@ -314,7 +319,7 @@ async function doOrganize(group, empty = false) {
     if (input && input.value === submitted) input.value = '';
     const currentInput = document.getElementById('paste-' + GKEY[group]);
     if (currentInput && currentInput.value === submitted) currentInput.value = '';
-  }, group + ' 자료를 등록했습니다');
+  }, group + (empty ? ' · 이번 주 해당 글 없음으로 등록했습니다.' : ' 자료를 등록했습니다'));
 }
 // ---------------------------------------------------------------- 2) 크로스체크 대기
 function gradeStatus(d, grade, active = true) {
@@ -486,7 +491,7 @@ function viewMember() {
   const sun = sundayOf();
   const upload = canUpload ? '<section class="panel"><div class="head-row"><h2>' + H(S.group) + ' 글 등록</h2><span class="grow"></span>' +
     (!d ? back : '') + '</div>' + copyInstructions() +
-    '<p class="muted">게시일 ' + E.fmtMD(E.addDays(sun, -6)) + '(월) ~ ' + E.fmtMD(sun) + '(일)</p>' + memberPasteFields(S.group) + '</section>' : '';
+    '<p class="muted">게시일 ' + E.fmtMD(E.addDays(sun, -6)) + '(월) ~ ' + E.fmtMD(sun) + '(일)</p>' + memberPasteFields(S.group, !!d) + '</section>' : '';
   if (!memberCanEdit(d, role, st().phase)) {
     if (upload) return upload;
     const message = !d ? '1학년이 담당 글을 등록하고 크로스체크를 완료하면 여기에 표시됩니다.' :

@@ -64,6 +64,10 @@ test('first-grade members register their own posts and can append only before ha
  vm.createContext(box);
  vm.runInContext(source.slice(source.indexOf('async function doOrganize('), source.indexOf('function viewWaiting(')), box);
 
+ await box.doOrganize(group, true);
+ assert(!docs.has(path));
+ assert.equal(input.value, pasted(1));
+
  await box.doOrganize(group);
  const first = docs.get(path);
  assert.equal(memberReviewStage(first), 'first');
@@ -93,6 +97,18 @@ test('first-grade members register their own posts and can append only before ha
  docs.set(path, { ...appended, firstDoneAt: 'now' });
  await assert.rejects(box.doOrganize(group), /이미 1학년 검토/);
  assert.equal(input.value, pasted(3));
+
+ input.value = '';
+ await assert.rejects(box.doOrganize(group, true), /이미 1학년 검토/);
+ assert.equal(docs.get(path).rows, appended.rows);
+
+ box.S.group = '남사감';
+ await box.doOrganize('남사감', true);
+ const empty = docs.get('cur/g_m');
+ assert.equal(memberReviewStage(empty), 'complete');
+ assert.equal(empty.noPosts, true);
+ assert.equal(empty.rows.length, 0);
+ assert.equal(docs.get('cur/final'), final);
 });
 
 test('the selected first-grade group shows the copy guide and paste box before any upload', () => {
@@ -109,7 +125,7 @@ test('the selected first-grade group shows the copy guide and paste box before a
  assert.match(html, /href="help.html"/);
  assert.match(html, /선택한 글 가져오기/);
  assert.match(html, /id="paste-a"/);
- assert.match(html, /등록하고 크로스체크/);
+ assert.match(html, /등록하고 크로스체크<\/button><button[^>]+data-act="emptyGroup"[^>]*>이번 주 해당 글 없음/);
  box.S.role = 'member2';
  assert.doesNotMatch(box.viewMember(), /<textarea|help.html/);
 });
