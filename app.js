@@ -3,10 +3,10 @@ import * as CM from './court-meta.js?v=titles-20261108-4';
 import * as Roster from './roster.js?v=semester-20261107-1';
 import {verifyChiefPassword,parseChiefSetup,validChiefVerifier} from './chief-auth.js?v=semester-20261107-1';
 import { sourceStamp, rowsForGroup, combinedRows, currentStamps as stampsForGroups, reviewSnapshotMatches, memberReviewStage, canonicalString } from './review.js?v=grade-review-20261122';
-import * as E from './engine.js?v=morning-review-20261122';
-import * as M from './manual.js?v=morning-review-20261122';
-import { createVersion2 } from './version2.js?v=morning-review-20261122';
-import * as IO from './io.js?v=morning-review-20261122';
+import * as E from './engine.js?v=morning-day-20261122';
+import * as M from './manual.js?v=morning-day-20261122';
+import { createVersion2 } from './version2.js?v=morning-day-20261122';
+import * as IO from './io.js?v=morning-day-20261122';
 import { firebaseStore, localStore } from './store.js?v=uploads-20261101-1';
 
 // ================================================================ 공통
@@ -262,7 +262,7 @@ async function doOrganize(group, empty = false) {
   if (S.saving) return;
   const input = document.getElementById('paste-' + GKEY[group]);
   const sunday = document.getElementById('sunday').value || sundayOf();
-  const posts = empty ? [] : E.parsePasted(input.value);
+  const posts = empty ? [] : E.parsePasted(input.value).map(post => ({ ...post, uploadGroup: group }));
   if (!empty && !posts.length) { toast('붙여넣은 글을 읽지 못했습니다.', 5000); return; }
   const monday = E.addDays(sunday, -6);
   const wk = E.extractWeek(Object.assign(E.makeCtx(S.docs.refs, sunday), {femaleDefaultDate: st().courtMeta?.courtDate || sunday}), posts, monday, sunday);

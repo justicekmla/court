@@ -1,5 +1,5 @@
-import * as E from './engine.js?v=morning-review-20261122';
-import * as M from './manual.js?v=morning-review-20261122';
+import * as E from './engine.js?v=morning-day-20261122';
+import * as M from './manual.js?v=morning-day-20261122';
 import {readCourtFile,writeEditedCourt} from './courtfile.js?v=titles-20261108-4';
 const H=M.H;
 // Keep the uploaded workbook and edits together across refreshes in this browser.

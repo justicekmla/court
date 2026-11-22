@@ -102,3 +102,41 @@ test('bulk edits save only selected rows and preserve individually edited points
     ['2026-11-04', absence], ['2026-11-04', absence], ['2026-11-03', absence],
   ]);
 });
+
+test('day-only morning headings keep the names below each day and avoid false duplicates', () => {
+  const sunday = '2026-11-22';
+  const C = E.makeCtx(refs, sunday);
+  const p = { ...post('13일\n가상학생\n시험학생\n\n16일\n가상학생\n예시학생'), date: sunday };
+  const { rows } = E.extractWeek(C, [p], '2026-11-16', sunday);
+  assert.deepEqual(E.compute(C, rows).rows.map(r => [r.name, r.date, r.status]), [
+    ['가상학생', '2026-11-13', 'ok'],
+    ['시험학생', '2026-11-13', 'ok'],
+    ['가상학생', '2026-11-16', 'ok'],
+    ['예시학생', '2026-11-16', 'ok'],
+  ]);
+});
+
+test('saved morning rows move to the new day heading and retain manually edited dates', () => {
+  const sunday = '2026-11-22';
+  const C = E.makeCtx(refs, sunday);
+  const p = { ...post('11월 13일\n가상학생\n[16일] 가상학생\n예시학생'), date: sunday };
+  const { rows } = E.extractWeek(C, [p], '2026-11-16', sunday);
+  const saved = rows.map(r => ({ ...r, date: '2026-11-13' }));
+  saved[2].date = '2026-11-17';
+  saved[2].edited = ['date'];
+  C.sourcePosts = [p];
+  assert.deepEqual(E.compute(C, saved).rows.map(r => [r.date, r.status]), [
+    ['2026-11-13', 'ok'], ['2026-11-16', 'ok'], ['2026-11-17', 'ok'],
+  ]);
+  assert.equal(saved[1].date, '2026-11-13');
+});
+
+test('day-only headings use the posting date to resolve a month or year boundary', () => {
+  const date = '2026-01-04';
+  const C = E.makeCtx(refs, date);
+  const p = { ...post('31일(수) 가상학생\n2일 (금) 시험학생'), date };
+  const rows = E.mentionsToRows(C, E.parsePost(C, p)).rows;
+  assert.deepEqual(rows.map(r => [r.name, r.date]), [
+    ['가상학생', '2025-12-31'], ['시험학생', '2026-01-02'],
+  ]);
+});

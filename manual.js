@@ -1,4 +1,4 @@
-import * as E from './engine.js?v=morning-review-20261122';
+import * as E from './engine.js?v=morning-day-20261122';
 export const ARTICLES = [
 'Late for school', 'Late for school 7', 'Late for 혼정', 'Late for morning exercise', 'Late for court',
 'Absent from school', 'Absent from 혼정', E.MORNING_ABSENCE_ARTICLE, 'Absent from court',

@@ -154,6 +154,9 @@ export const MORNING_ABSENCE_ARTICLE = 'Violated outdoor regulation(심신수련
 const retiredMorningAbsence = /^absent\s+from\s+morning\s+exercise$/i;
 const morningAbsenceKeyword = /(?:평일\s*)?(?:신성(?:\s*\(아침기\))?|아침기(?:\s*\((?:평일\s*)?신성\))?)\s*불참|\babsent\s+from\s+morning\s+exercise\b|\bviolated\s+outdoor\s+regu(?:lation|altion)\s*\(\s*심신수련\s*\)/i;
 const morningTitle = /(?:아침\s*기|심신\s*수련|평일\s*신성).*기소/;
+const isMorningTitle = title => morningTitle.test(title) || morningAbsenceKeyword.test(title);
+const isMorningSource = p => isMorningTitle(normalize(p.title)) || p.uploadGroup === '아침기' || groupOf(p.user) === '아침기';
+const dayHeading = /^(?:[•*-]\s*)?\[?\s*(\d{1,2})\s*일(?![가-힣A-Za-z0-9])/;
 const morningLate = /(?:(?:평일\s*)?(?:아침\s*기|신성|심신\s*수련)\s*)?지각|\blate\s+for\s+morning\s+exercise\b/i;
 const morningLateArticle = C => C.articleList.find(a => a.toLowerCase() === 'late for morning exercise') || 'Late for morning exercise';
 
@@ -340,7 +343,8 @@ export function parsePost(C, p) {
   let postHint = gradeHint(C, p.title);
   const headerDates = new Map();
   const title = normalize(p.title);
-  const morning = morningTitle.test(title) || morningAbsenceKeyword.test(title);
+  const morning = isMorningTitle(title);
+  const morningDates = morning || p.uploadGroup === '아침기' || groupOf(poster) === '아침기';
   const titleArticle = !morning ? '' : morningLate.test(title) ? morningLateArticle(C) : MORNING_ABSENCE_ARTICLE;
   let curArt = titleArticle, datedArticle = false;
   let curFixed, curStated, curMo = 0, curDy = 0, curWd = false;
@@ -351,7 +355,7 @@ export function parsePost(C, p) {
     const line = vbTrim(raw);
     if (!line) return [];
     // Treat a bracketed date at the start as a heading, but keep student annotations.
-    const body = line.replace(/^([•*-]\s*)?[(\[]\s*(\d{1,2}(?:\s*\/\s*|\.)\d{1,2}|\d{1,2}\s*월\s*\d{1,2}\s*일)\s*[)\]]/, '$1$2');
+    const body = line.replace(/^([•*-]\s*)?[(\[]\s*(\d{1,2}(?:\s*\/\s*|\.)\d{1,2}|(?:\d{1,2}\s*월\s*)?\d{1,2}\s*일)\s*[)\]]/, '$1$2');
     // Use original offsets when splitting a line containing several dated groups.
     const offsets = findDates(body.replace(/\([^()]*\)/g, note => ' '.repeat(note.length))).map(([start]) => start - 1);
     const separate = offsets.length > 1 && offsets.slice(1).every((end, k) =>
@@ -378,6 +382,14 @@ export function parsePost(C, p) {
     const rep = repCount(line2);
     const noParen = stripParens(line2);
     const ds = findDates(noParen);
+    const short = morningDates && !ds.length && dayHeading.exec(noParen);
+    if (short) {
+      const day = Number(short[1]);
+      const posted = parts(p.date);
+      // A day without a month refers to the latest occurrence as of posting.
+      const month = day <= posted.d ? posted.m : posted.m === 1 ? 12 : posted.m - 1;
+      ds.push([1, short[0].length, month, day]);
+    }
     let clean = removeSpans(noParen, ds);
     if (kw) clean = clean.replace(new RegExp(kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), ' ');
     const cands = []; let known = 0;
@@ -406,7 +418,7 @@ export function parsePost(C, p) {
     for (const t of names) {
       let hint = postHint, mult = 1, ptsOv;
       if (maleCurfew) ptsOv = curfewPoints(ln, t);
-      let dts = [lineMo > 0 ? [lineMo, lineDy] : [curMo, curDy]];
+      let dts = [ds.length ? [lineMo, lineDy] : [curMo, curDy]];
       for (const inner of per.get(t) || []) {
         const g2 = gradeHint(C, inner); if (g2 > 0) hint = g2;
         if (!inner.includes('총')) { const k = numBefore(inner, '회'); if (k > 0) mult = k; }
@@ -422,7 +434,7 @@ export function parsePost(C, p) {
       }
     }
   }
-  if (!morning && headerDates.size === 1) { const hd = [...headerDates.values()][0]; for (const x of local) if (x.mo === 0) { x.mo = hd[0]; x.dy = hd[1]; } }
+  if (!morningDates && headerDates.size === 1) { const hd = [...headerDates.values()][0]; for (const x of local) if (x.mo === 0) { x.mo = hd[0]; x.dy = hd[1]; } }
   return local; // art === '' → 기소 항목을 찾지 못한 이름
 }
 
@@ -590,7 +602,7 @@ export function expandSourceRows(C, input) {
     if (!siblings.length && !C.restoreMissingNames) continue;
     if (C.restoreMissingNames && (!p.date || p.date < addDays(C.baseDate,-6) || p.date > C.baseDate)) continue;
     const parsed = parsePost(C, p);
-    if (morningTitle.test(normalize(p.title)) || morningAbsenceKeyword.test(normalize(p.title))) {
+    if (isMorningSource(p)) {
       refreshMorningRows(C, siblings, parsed);
     }
     const mentions = parsed.filter(m => canonicalName(baseName(m.tok), C).length > 4 && isKnown(C, m.tok));
@@ -673,6 +685,7 @@ function refreshMorningRows(C, saved, mentions) {
     const flags = r.flags || [];
     if (!edited.has('date')) {
       r.date = match.date;
+      r.dateDefaulted = match.dateDefaulted;
       r.flags = flags.filter(f => f[0] !== 'date').concat(match.flags.filter(f => f[0] === 'date'));
     }
     if (!edited.has('art') && match.art &&
