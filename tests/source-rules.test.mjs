@@ -4,6 +4,7 @@ import fs from 'node:fs/promises';
 import vm from 'node:vm';
 import * as E from '../engine.js';
 import { ARTICLES } from '../manual.js';
+import { canonicalString, memberReviewStage } from '../review.js';
 const refs={roster:[{name:'이지효',grade:1},{name:'황예진',grade:1}],articles:[{art:'Late for school',pts:3},{art:'Late for school 7',pts:7},{art:'Violated curfew regulation',pts:8}],dict:[{kw:'지각',art:'Late for school'},{kw:'통금 위반',art:'Violated curfew regulation'}]};
 const ctx=()=>Object.assign(E.makeCtx(refs,'2026-11-08'),{femaleDefaultDate:'2026-11-11'});
 const parse=(text,user='김대기')=>{const C=ctx(); return E.mentionsToRows(C,E.parsePost(C,{id:'1',date:'2026-11-08',user,title:'생활',text})).rows.map((r,i)=>({...r,id:'r'+i,seq:i}));};
@@ -96,7 +97,7 @@ test('draft saves serialize and retain the latest rows through reload without co
  const begin=source.indexOf('function saveScope('),end=source.indexOf('function defaultPts(',begin);
  const persisted={revision:'rev',done:false,rows:[row()],extra:'preserve',draft:null};
  const pending=[]; let saved=structuredClone(persisted);
- const context={S:{group:'남사감',editRevision:'rev',docs:{g_m:structuredClone(persisted)}},GKEY:{남사감:'m'},draftBuffers:new Map(),groupWrites:new Map(),gdoc:()=>context.S.docs.g_m,save:async fn=>{await fn();return true},store:{transaction:async fn=>{await new Promise(resolve=>pending.push(resolve));await fn({get:async()=>structuredClone(saved),set:(_,d)=>saved=structuredClone(d)});}},toast:()=>{},render:()=>{},clone:structuredClone};
+ const context={S:{role:'member',group:'남사감',editRevision:'rev',docs:{g_m:structuredClone(persisted)}},GKEY:{남사감:'m'},st:()=>({phase:'review'}),memberCanEdit:(d,role,phase)=>role==='member'&&phase==='review'&&memberReviewStage(d)==='first',draftBuffers:new Map(),groupWrites:new Map(),gdoc:()=>context.S.docs.g_m,save:async fn=>{await fn();return true},store:{transaction:async fn=>{await new Promise(resolve=>pending.push(resolve));await fn({get:async path=>path==='cfg/state'?{phase:'review'}:structuredClone(saved),set:(_,d)=>saved=structuredClone(d)});}},toast:()=>{},render:()=>{},clone:structuredClone};
  context.working=()=>context.draftBuffers.get('남사감')?.rows||context.S.docs.g_m.draft||context.S.docs.g_m.rows;
  vm.createContext(context);vm.runInContext(source.slice(begin,end),context);
  const first=[row({pts:4,edited:['pts']})],last=[row({pts:5,edited:['pts'],keepDuplicate:true})];
@@ -107,4 +108,42 @@ test('draft saves serialize and retain the latest rows through reload without co
  assert.deepEqual(context.working(),last);
  // A fresh page uses the saved draft, including manual edits and duplicate choice.
  context.draftBuffers.clear();context.S.docs.g_m=structuredClone(saved);assert.deepEqual(context.working(),last);
+});
+
+test('second review receives the first result and a changed draft cannot be approved unseen',async()=>{
+ const source=await fs.readFile(new URL('../app.js',import.meta.url),'utf8');
+ const state={phase:'review'};
+ let saved={revision:'initial',done:false,rows:[row()],draft:[row({pts:7,edited:['pts']})]};
+ let confirm, serial=0;
+ const S={role:'member2',group:'남사감',editRevision:saved.revision};
+ const sandbox={
+  S,E,ctx,canonicalString,MEMBER_ROLES:{member:'1학년',member2:'2학년'},GKEY:{남사감:'m'},groupWrites:new Map(),st:()=>state,
+  memberCanEdit:(d,role,phase)=>phase==='review'&&memberReviewStage(d)===(role==='member'?'first':'second'),
+  gdoc:()=>saved,working:()=>saved.draft||saved.rows,H:String,uid:()=>String(++serial),
+  confirmBox:(_title,_body,_label,fn)=>{confirm=fn;},toast:()=>{},
+  save:async fn=>fn(),
+  store:{transaction:fn=>fn({get:async path=>path==='cfg/state'?state:saved,set:(_,doc)=>{saved=doc;}})}
+ };
+ vm.createContext(sandbox);
+ vm.runInContext(source.slice(source.indexOf('async function finishMemberReview('),source.indexOf('async function saveDraft(')),sandbox);
+ await sandbox.finishMemberReview();
+ assert.equal(confirm,undefined);
+ S.role='member';
+ await sandbox.finishMemberReview();
+ await confirm();
+ assert.equal(memberReviewStage(saved),'second');
+ assert.equal(saved.rows[0].pts,7);
+ assert.equal(saved.draft,null);
+ assert.equal(memberReviewStage({done:true,rows:saved.rows}),'second');
+ S.role='member2';
+ S.editRevision=saved.revision;
+ await sandbox.finishMemberReview();
+ saved.draft=[row({pts:9,edited:['pts']})];
+ await assert.rejects(confirm(),/자료가 변경되었습니다/);
+ await sandbox.finishMemberReview();
+ await confirm();
+ assert.equal(memberReviewStage(saved),'complete');
+ assert.equal(saved.rows[0].pts,9);
+ assert.equal(saved.draft,null);
+ assert.equal(memberReviewStage({noPosts:true,done:true,rows:[]}),'complete');
 });

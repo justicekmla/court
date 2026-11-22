@@ -17,6 +17,12 @@ export function sourceStamp(doc) {
   for (let i=0; i<text.length; i++) { a=Math.imul(a^text.charCodeAt(i),16777619); b=Math.imul(b,33)^text.charCodeAt(i); }
   return 'v2:'+(a>>>0).toString(36)+'-'+(b>>>0).toString(36);
 }
+export function memberReviewStage(doc) {
+  if (!doc) return null;
+  if (doc.noPosts || (doc.firstDoneAt && doc.done)) return 'complete';
+  // A completion from before the two grades were introduced is the first review.
+  return doc.firstDoneAt || doc.done ? 'second' : 'first';
+}
 export const rowsForGroup = (rows, group) => rows.filter(row => (GROUPS.includes(row.uploadGroup) ? row.uploadGroup : groupOf(row.user)) === group);
 export function currentStamps(groups) {
   return Object.fromEntries(GROUPS.map((g,i) => [GKEY[g],sourceStamp(groups[i])]));

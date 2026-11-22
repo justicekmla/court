@@ -2,7 +2,7 @@ import {directoryPanel,filterDirectory} from './directory.js?v=20261114-1';
 import * as CM from './court-meta.js?v=titles-20261108-4';
 import * as Roster from './roster.js?v=semester-20261107-1';
 import {verifyChiefPassword,parseChiefSetup,validChiefVerifier} from './chief-auth.js?v=semester-20261107-1';
-import { sourceStamp, rowsForGroup, combinedRows, currentStamps as stampsForGroups, reviewSnapshotMatches } from './review.js?v=upload-groups-20261115-1';
+import { sourceStamp, rowsForGroup, combinedRows, currentStamps as stampsForGroups, reviewSnapshotMatches, memberReviewStage, canonicalString } from './review.js?v=grade-review-20261122';
 import * as E from './engine.js?v=morning-review-20261122';
 import * as M from './manual.js?v=morning-review-20261122';
 import { createVersion2 } from './version2.js?v=morning-review-20261122';
@@ -15,6 +15,8 @@ const H = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').repl
 const UPLOAD_GROUPS = ['여사감', '남사감', '인트라넷', '아침기'];
 const GKEY = { '남사감': 'm', '여사감': 'f', '인트라넷': 'i', '아침기': 'a' };
 const GDESC = Object.fromEntries(UPLOAD_GROUPS.map(g => [g, '작성자 제한 없이 등록할 수 있습니다. 이 칸에 넣은 글은 ' + g + ' 업무로 전달됩니다.']));
+const MEMBER_ROLES = { member: '1학년', member2: '2학년' };
+const MEMBER_STAGES = { member: 'first', member2: 'second' };
 const FLAG_CLS = { name: 'f-name', ambig: 'f-ambig', date: 'f-date', pts: 'f-pts' };
 const LOCAL = new URLSearchParams(location.search).has('test');
 const todayIso = () => { const t = new Date(); return E.iso(t.getFullYear(), t.getMonth() + 1, t.getDate()); };
@@ -64,7 +66,8 @@ const gdoc = g => S.docs['g_' + GKEY[g]];
 const draftBuffers = new Map(), groupWrites = new Map();
 const working = g => { const d = gdoc(g), buffer = draftBuffers.get(g); return buffer && buffer.revision === (d?.revision || '') ? buffer.rows : d ? (d.draft || d.rows || []) : []; };
 const committed = g => { const d = gdoc(g); return d ? (d.rows || []) : []; };
-const allDone = () => E.GROUPS.every(g => gdoc(g) && gdoc(g).done);
+const reviewComplete = d => memberReviewStage(d) === 'complete';
+const memberCanEdit = (d, role, phase) => phase === 'review' && memberReviewStage(d) === MEMBER_STAGES[role];
 function postsById() { const m = new Map(); for (const p of (S.docs.posts && S.docs.posts.posts) || []) m.set(String(p.id), p); return m; }
 function extrasRows() {
   const items = ((S.docs.extras && S.docs.extras.items) || []).filter(x => !x.deleted);
@@ -132,7 +135,7 @@ function render() {
 }
 function topbar() {
   if (!S.user) return '';
-  const role = S.role === 'chief' ? '법무부장' : S.role === 'member' ? '법무부원' + (S.group ? ' · ' + S.group : '') : '';
+  const role = S.role === 'chief' ? '법무부장' : MEMBER_ROLES[S.role] ? '법무부원(' + MEMBER_ROLES[S.role] + ')' + (S.group ? ' · ' + S.group : '') : '';
   return '<header class="top"><button class="brand" data-act="home">법정리스트</button>' +
     (st().listNo ? '<span class="pill">Court List ' + H(st().listNo) + '</span>' : '') +
     (role ? '<span class="pill role">' + H(role) + '</span>' : '') +
@@ -153,7 +156,7 @@ function viewLogin() {
 function viewHome() {
   const sun = sundayOf(), mon = E.addDays(sun, -6);
   return '<div class="center-box home"><h1>법정리스트</h1>' +
-    '<div class="home-btns"><button class="primary huge" data-act="role" data-role="chief">법무부장</button><button class="outline huge" data-act="seat-arranger">법무부차장</button><button class="outline huge" data-act="role" data-role="member">법무부원</button><button class="outline huge" data-act="ledger">누계</button></div>' +
+    '<div class="home-btns"><button class="primary huge" data-act="role" data-role="chief">법무부장</button><button class="outline huge" data-act="seat-arranger">법무부차장</button><button class="outline huge" data-act="role" data-role="member">법무부원(1학년)</button><button class="outline huge" data-act="role" data-role="member2">법무부원(2학년)</button><button class="outline huge" data-act="ledger">누계</button></div>' +
     '<p class="muted">' + (st().phase && st().phase !== 'idle' ? '진행 중: ' + E.fmtMD(mon) + '(월) ~ ' + E.fmtMD(sun) + '(일) · ' + phaseText() : '이번 주 정리를 아직 시작하지 않았습니다') + '</p>' +
     (LOCAL ? '<p class="test-note">시험 모드입니다. 이 브라우저에만 저장되며 다른 사람과 공유되지 않습니다.</p>' : '') + '</div>';
 }
@@ -223,9 +226,9 @@ function viewChiefVersion1() {
   if (!refsReady()) return viewNeedRefs();
   const ph = st().phase || 'idle';
   if (ph === 'idle') return viewPaste();
-  if (ph === 'review') return viewPaste() + viewWaiting() + (E.GROUPS.some(g => gdoc(g)?.done) ? viewFinal() : '');
-  if (ph === 'extras') return viewExtras();
-  if (ph === 'list') return viewList();
+  if (ph === 'review') return viewPaste() + viewWaiting() + (E.GROUPS.some(g => reviewComplete(gdoc(g))) ? viewFinal() : '');
+  if (ph === 'extras') return viewWaiting(false) + viewExtras();
+  if (ph === 'list') return viewWaiting(false) + viewList();
   return viewPaste();
 }
 function steps(n) {
@@ -249,7 +252,7 @@ function viewPaste() {
     '<p class="muted" id="weekInfo">' + E.fmtMD(E.addDays(sun, -6)) + '(월) ~ ' + E.fmtMD(sun) + '(일) 에 올라온 글만 씁니다</p>' +
     UPLOAD_GROUPS.map(g => {
       const k = GKEY[g], d = gdoc(g);
-      return '<details class="panel" data-upload="' + k + '"><summary><b>' + g + '</b> · ' + (d ? d.done ? '크로스체크 완료' : '크로스체크 가능' : '업로드 대기') + '</summary>' +
+      return '<details class="panel" data-upload="' + k + '"><summary><b>' + g + '</b> · ' + (d ? d.noPosts ? '해당 글 없음' : reviewComplete(d) ? '두 학년 검토 완료' : '크로스체크 가능' : '업로드 대기') + '</summary>' +
         '<p class="muted">' + GDESC[g] + '</p><textarea id="paste-' + k + '" class="paste" placeholder="' + g + ' 글 붙여넣기" data-keep="paste-' + k + '"></textarea>' +
         '<button class="primary" data-act="organize" data-g="' + g + '"' + (S.saving ? ' disabled' : '') + '>이 업무 글 정리·추가</button>' +
         '<button class="ghost" data-act="emptyGroup" data-g="' + g + '">이번 주 해당 글 없음</button></details>';
@@ -281,7 +284,7 @@ async function doOrganize(group, empty = false) {
       const now = new Date().toISOString(), revision = uid();
       const newRows = wk.rows.filter(r => addedIds.has(String(r.post))).map(r => ({ ...r, uploadGroup: group, id: revision + '-' + r.id, mid: revision + '-' + r.mid }));
       const rows = (d && (d.draft || d.rows) || []).concat(newRows);
-      tx.set(path, { ...(d || {}), rows, draft: null, done: empty, doneAt: empty ? now : null, revision, createdAt: d && d.createdAt || now, updatedAt: now });
+      tx.set(path, { ...(d || {}), rows, draft: null, done: empty, doneAt: empty ? now : null, noPosts: empty, firstDoneAt: null, revision, createdAt: d && d.createdAt || now, updatedAt: now });
       tx.set('cur/posts', { ...previous, posts: existing.concat(added), monday, sunday, createdAt: previous.createdAt || now });
       tx.set('cfg/state', { ...state, phase: 'review', sunday, monday, startedAt: state.startedAt || now, listNo: state.listNo || 1 });
       tx.del('cur/final');
@@ -292,17 +295,26 @@ async function doOrganize(group, empty = false) {
   }, group + ' 자료를 등록했습니다');
 }
 // ---------------------------------------------------------------- 2) 크로스체크 대기
-function viewWaiting() {
+function gradeStatus(d, grade, active = true) {
+  const stage = memberReviewStage(d);
+  if (!stage) return '<span class="muted">업로드 대기</span>';
+  if (d.noPosts) return '<span class="muted">해당 글 없음</span>';
+  if (stage === 'complete' || (grade === 'first' && stage === 'second')) return '<span class="ok">완료</span>';
+  if (grade === 'second' && stage === 'first') return '<span class="muted">1학년 완료 대기</span>';
+  if (!active) return '<span class="muted">이전 방식으로 취합</span>';
+  return d.draft ? '<span class="warn">수정 중</span>' : '<span class="muted">검토 대기</span>';
+}
+function viewWaiting(active = true) {
   const rows = E.GROUPS.map(g => {
-    const d = gdoc(g) || {}; const list = (d.draft || d.rows || []).filter(r => !r.placeholder);
-    const s = !gdoc(g) ? '<span class="muted">업로드 대기</span>' : d.done ? '<span class="ok">✔ 완료</span>' : d.draft ? '<span class="warn">수정 중</span>' : '<span class="muted">시작 전</span>';
-    return '<tr><td><b>' + g + '</b> <span class="muted small">' + GDESC[g] + '</span></td><td class="num">' + list.length + '</td><td>' + s + '</td>' +
-      '<td>' + (d.done ? '<button class="ghost small" data-act="reopen" data-g="' + g + '">다시 열기</button>' : '') + '</td></tr>';
+    const d = gdoc(g);
+    const list = (d?.draft || d?.rows || []).filter(r => !r.placeholder);
+    return '<tr><td><b>' + g + '</b></td><td class="num">' + list.length + '</td><td>' + gradeStatus(d, 'first', active) + '</td><td>' + gradeStatus(d, 'second', active) + '</td>' +
+      (active ? '<td>' + (d && memberReviewStage(d) !== 'first' ? '<button class="ghost small" data-act="reopen" data-g="' + g + '">다시 열기</button>' : '') + '</td>' : '') + '</tr>';
   }).join('');
-  const n = E.GROUPS.filter(g => gdoc(g) && gdoc(g).done).length;
-  return steps(2) + '<div class="panel narrow center"><h2>법무부원 크로스체크 진행 중…</h2>' +
-    '<div class="progress"><div style="width:' + (n * 25) + '%"></div></div><p class="muted">' + n + ' / 4 완료 · 완료한 업무부터 부장이 검토할 수 있습니다. 4개 업무 최종 확인 후 취합합니다.</p>' +
-    '<table class="grid compact"><thead><tr><th>담당</th><th>항목 수</th><th>상태</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>' +
+  const n = E.GROUPS.filter(g => reviewComplete(gdoc(g))).length;
+  return (active ? steps(2) : '') + '<div class="panel narrow center"><h2>학년별 크로스체크 현황</h2>' +
+    (active ? '<div class="progress"><div style="width:' + (n * 100 / E.GROUPS.length) + '%"></div></div><p class="muted">부장 검토 가능 ' + n + ' / ' + E.GROUPS.length + '개 업무</p>' : '') +
+    '<table class="grid compact"><thead><tr><th>담당</th><th>항목 수</th><th>1학년</th><th>2학년</th>' + (active ? '<th></th>' : '') + '</tr></thead><tbody>' + rows + '</tbody></table>' +
     '<p class="muted small">' + weekLine() + '</p></div>';
 }
 function weekLine() { const p = S.docs.posts || {}; return (p.posts ? p.posts.length + '개 글 · ' : '') + E.fmtMD(p.monday || '') + ' ~ ' + E.fmtMD(p.sunday || ''); }
@@ -310,12 +322,12 @@ function weekLine() { const p = S.docs.posts || {}; return (p.posts ? p.posts.le
 function finalRows() { return combinedRows(S.docs.final,E.GROUPS.map(gdoc)); }
 function currentStamps(groups=E.GROUPS.map(gdoc)){return stampsForGroups(groups);}
 
-function chiefApproved() { return allDone() && E.GROUPS.every(g => S.docs.final?.reviewed?.[GKEY[g]] === sourceStamp(gdoc(g))); }
+function chiefApproved() { return E.GROUPS.every(g => reviewComplete(gdoc(g)) && S.docs.final?.reviewed?.[GKEY[g]] === sourceStamp(gdoc(g))); }
 function viewFinal() {
   const rows = finalRows(), res=computeFor(rows), sm=statusMap(res);
   return steps(2) + '<div class="panel"><div class="head-row"><h2>부장 최종 검토</h2><span class="grow"></span>' +
     '<button class="primary" data-act="toExtras" '+(!chiefApproved() || S.saving ? 'disabled' : '')+'>최종 검토 완료 · 추가 기소로 →</button></div><p class="muted">업무별 검토를 열어 원문과 부원 수정 결과를 확인하고 최종 확인을 눌러 주세요. 부장이 수정하면 확인 상태가 해제됩니다.</p>'+summaryChips(counts(res.rows))+
-    E.GROUPS.filter(g=>gdoc(g)?.done).map(g=>{
+    E.GROUPS.filter(g=>reviewComplete(gdoc(g))).map(g=>{
       const approved=S.docs.final?.reviewed?.[GKEY[g]]===sourceStamp(gdoc(g));
       return '<section class="panel"><div class="head-row"><h3>'+g+'</h3><span class="'+(approved?'ok':'warn')+'">'+(approved?'최종 확인 완료':'부장 확인 대기')+'</span><span class="grow"></span><button class="outline" data-act="reviewOpen" data-g="'+g+'">'+(reviewOpen.has(g)?'검토 닫기':'검토 열기')+'</button></div>'+
       (reviewOpen.has(g) ? rowsTable(rowsForGroup(rows,g),sm,{scope:'final'})+'<button class="primary" data-act="reviewApprove" data-g="'+g+'" '+(S.saving?'disabled':'')+'>이 업무 최종 확인</button><button class="ghost" data-act="reopen" data-g="'+g+'">부원에게 다시 열기</button>' : '')+'</section>';
@@ -327,7 +339,7 @@ async function approveReview(group) {
    const final=await tx.get('cur/final');
    const groups=await Promise.all(E.GROUPS.map(g=>tx.get('cur/g_'+GKEY[g])));
    const currentRows=combinedRows(final,groups);
-   if(!reviewSnapshotMatches(group,shown,stamp,final,groups)) throw Error('검토 중 자료가 변경되었습니다. 새로고침 후 다시 확인해 주세요.');
+   if(!reviewComplete(groups[E.GROUPS.indexOf(group)]) || !reviewSnapshotMatches(group,shown,stamp,final,groups)) throw Error('검토 중 자료가 변경되었습니다. 새로고침 후 다시 확인해 주세요.');
    tx.set('cur/final',{...(final||{}),rows:currentRows,sourceStamps:currentStamps(groups),reviewed:{...(final?.reviewed||{}),[GKEY[group]]:stamp},updatedAt:new Date().toISOString()});
  }),group+' 최종 확인을 기록했습니다');
 }
@@ -335,7 +347,8 @@ async function goToExtras(phase='extras') {
  await save(()=>store.transaction(async tx=>{
    const state=await tx.get('cfg/state'), final=await tx.get('cur/final');
    const groups=await Promise.all(E.GROUPS.map(g=>tx.get('cur/g_'+GKEY[g])));
-   if(!E.GROUPS.every((g,i)=>groups[i]?.done && final?.reviewed?.[GKEY[g]]===sourceStamp(groups[i]))) throw Error('모든 업무의 부장 최종 확인을 완료해 주세요.');
+   const alreadyInFinalSteps = ['extras', 'list'].includes(state?.phase);
+   if(!E.GROUPS.every((g,i)=>(reviewComplete(groups[i]) || (alreadyInFinalSteps && groups[i]?.done)) && final?.reviewed?.[GKEY[g]]===sourceStamp(groups[i]))) throw Error('모든 업무의 부장 최종 확인을 완료해 주세요.');
    tx.set('cfg/state',{...state,phase});
  }));
 }
@@ -431,30 +444,39 @@ function viewSettings() {
     '<h3>기준자료</h3><p class="muted">학생 ' + ((r.roster || []).length) + '명 · 벌점표 ' + ((r.articles || []).length) + '개 · 표현 ' + ((r.dict || []).length) + '개' + (r.updatedAt ? ' · ' + H(r.updatedAt.slice(0, 10)) + ' 올림' : '') + '</p>' +
     '<p>학기·학년이 바뀌거나 표현을 추가하려면 [내려받기] → 엑셀에서 고치기 → 다시 올리기.</p><div class="row-inline"><button class="outline" data-act="dlRefs">현재 기준자료 내려받기</button></div>' + dropZone('refs', '고친 기준자료.xlsx를 여기에 끌어다 놓거나 눌러서 고르세요') +
     '<h3>이번 주 자료</h3><p class="muted">' + (s.phase && s.phase !== 'idle' ? weekLine() + ' · ' + phaseText() : '진행 중인 정리가 없습니다') + '</p>' +
-    '<div class="row-inline">' + (s.phase && s.phase !== 'idle' ? E.GROUPS.map(g => gdoc(g) && gdoc(g).done ? '<button class="ghost small" data-act="reopen" data-g="' + g + '">' + g + ' 다시 열기</button>' : '').join('') +
+    '<div class="row-inline">' + (s.phase && s.phase !== 'idle' ? E.GROUPS.map(g => gdoc(g) && memberReviewStage(gdoc(g)) !== 'first' ? '<button class="ghost small" data-act="reopen" data-g="' + g + '">' + g + ' 다시 열기</button>' : '').join('') +
       '<button class="danger ghost" data-act="resetWeek">이번 주 정리 지우고 처음부터</button>' : '') + '</div>' +
     '<h3>계정</h3><p class="muted">' + H(S.user && S.user.email) + '</p><button class="ghost" data-act="logout">로그아웃</button></div>';
 }
 
 // ================================================================ 법무부원
 function viewMember() {
-  if (!refsReady()) return '<div class="center-box"><h2>아직 정리된 글이 없습니다</h2><p class="muted">법무부장이 인트라넷 글을 붙여넣고 정리하면 여기에 나타납니다. 이 화면은 자동으로 바뀝니다.</p></div>';
-  if (!S.group) return '<div class="center-box"><h2>담당을 고르세요</h2><div class="grid4">' + E.GROUPS.map(g => {
-    const d = gdoc(g) || {};
-    return '<button class="primary huge g" data-act="pick" data-g="' + g + '">' + g + (d.done ? '<small>완료</small>' : d.draft ? '<small>수정 중</small>' : '') + '</button>';
-  }).join('') + '</div><p class="muted small">' + weekLine() + '</p></div>';
-  const d = gdoc(S.group);
-  if (!d) return '<div class="center-box"><h2>' + H(S.group) + ' 업로드 대기</h2><p>법무부장이 이 업무 자료를 정리하면 자동으로 표시됩니다.</p><button class="ghost" data-act="role" data-role="member">담당 다시 고르기</button></div>';
+  if (!refsReady()) return '<div class="center-box"><h2>아직 정리된 글이 없습니다</h2><p class="muted">법무부장이 글을 정리하면 여기에 나타납니다.</p></div>';
+  const role = S.role, grade = MEMBER_STAGES[role], active = st().phase === 'review';
+  const back = '<button class="ghost" data-act="role" data-role="' + role + '">담당 다시 고르기</button>';
+  if (!S.group) return '<div class="center-box"><h2>담당을 고르세요</h2><div class="grid4">' + E.GROUPS.map(g =>
+    '<button class="primary huge g" data-act="pick" data-g="' + g + '">' + g + '<small>' + gradeStatus(gdoc(g), grade, active) + '</small></button>'
+  ).join('') + '</div><p class="muted small">' + weekLine() + '</p></div>';
+  const d = gdoc(S.group), stage = memberReviewStage(d);
+  if (!memberCanEdit(d, role, st().phase)) {
+    const message = !d ? '법무부장이 이 업무 자료를 정리하면 자동으로 표시됩니다.' :
+      d.noPosts ? '이번 주에는 검토할 글이 없습니다.' :
+      stage === 'complete' ? '두 학년의 크로스체크가 완료되었습니다.' :
+      !active ? '이 업무는 최종 검토 이후 단계로 넘어갔습니다.' :
+      grade === 'first' ? '1학년 검토가 완료되었습니다. 2학년이 수정 내용을 이어서 검토합니다.' :
+      '1학년이 크로스체크를 완료하면 수정한 정리본이 여기에 표시됩니다.';
+    return '<div class="center-box"><h2>' + H(S.group) + '</h2><p>' + message + '</p>' + back + '</div>';
+  }
   S.editRevision = d.revision || '';
-  if (d.done) return '<div class="center-box thanks"><div class="big-emoji">🙂</div><h1>수고하셨습니다</h1><p class="muted">' + H(S.group) + ' 크로스체크가 통합 정리본에 반영되었습니다.<br>이 화면 이후에는 수정할 수 없습니다.</p></div>';
+  const next = grade === 'first' ? '완료하면 2학년이 수정 내용을 이어서 검토합니다.' : '1학년이 검토한 내용을 바탕으로 확인해 주세요. 완료하면 법무부장이 최종 검토할 수 있습니다.';
   const mine = working(S.group);
   const others = E.GROUPS.filter(g => g !== S.group).flatMap(g => committed(g));
   const res = computeFor(mine.concat(others)); const sm = statusMap(res);
   const cnt = counts(rowsForGroup(res.rows,S.group));
   return '<div class="panel"><div class="head-row"><h2>' + H(S.group) + ' <span class="muted small">' + GDESC[S.group] + '</span></h2><span class="grow"></span>' +
-    '<button class="outline" data-act="saveDraft">임시저장</button><button class="primary" data-act="memberDone">크로스체킹 완료</button></div>' +
-    '<p class="muted">원문과 나란히 보며 이름·날짜·항목·점수를 고치세요. 고친 내용은 자동 저장됩니다. [임시저장] 후 저장 완료를 확인하면 나중에 다시 들어와 이어서 할 수 있습니다. [크로스체킹 완료]를 누르면 통합 정리본에 한꺼번에 반영됩니다.</p>' + summaryChips(cnt) + legend() +
-    rowsTable(mine, sm, { scope: 'group' }) + '<div class="foot-row"><button class="outline big" data-act="saveDraft">임시저장</button><button class="primary big" data-act="memberDone">크로스체킹 완료</button></div></div>';
+    back + '<button class="outline" data-act="saveDraft">임시저장</button><button class="primary" data-act="memberDone">' + MEMBER_ROLES[role] + ' 크로스체킹 완료</button></div>' +
+    '<p class="muted">' + next + ' 원문과 나란히 보며 이름·날짜·항목·점수를 고치세요. 수정 내용은 자동 저장됩니다.</p>' + summaryChips(cnt) + legend() +
+    rowsTable(mine, sm, { scope: 'group' }) + '<div class="foot-row"><button class="outline big" data-act="saveDraft">임시저장</button><button class="primary big" data-act="memberDone">' + MEMBER_ROLES[role] + ' 크로스체킹 완료</button></div></div>';
 }
 function legend() { return '<p class="legend"><span class="f-name">명단에 없는 이름</span><span class="f-ambig">동명이인 추정</span><span class="f-date">날짜 없음·오타 의심</span><span class="f-pts">점수 미기재·벌점표에 없음</span><span class="st-dup">중복·취하(회색)</span></p>'; }
 
@@ -539,30 +561,57 @@ function rowsTable(rows, sm, opt) {
 function scopeRows(scope) { return scope === 'final' ? clone(E.expandSourceRows(ctx(), finalRows())) : clone(E.expandSourceRows(ctx(), working(S.group))); }
 function saveScope(scope, rows) {
   if (scope === 'final') { S.docs.final = { ...(S.docs.final || {}), rows, sourceStamps: currentStamps(), reviewed: {} }; return save(() => store.set('cur/final', { rows, sourceStamps: currentStamps(), reviewed: {}, updatedAt: new Date().toISOString() })); }
-  const group = S.group, k = 'cur/g_' + GKEY[group];
+  const group = S.group, role = S.role, k = 'cur/g_' + GKEY[group];
+  if (!memberCanEdit(gdoc(group), role, st().phase)) return false;
   const revision = S.editRevision;
   const buffer = {rows, revision}; draftBuffers.set(group, buffer);
-  const previous = groupWrites.get(group) || Promise.resolve(true);
+  const previous = groupWrites.get(group)?.task || Promise.resolve(true);
   const task = previous.then(() => save(() => store.transaction(async tx => {
     const latest = await tx.get(k);
-    if (!latest || latest.done || (latest.revision || '') !== revision) throw Error('자료가 갱신되었습니다. 새로고침 후 다시 수정해 주세요.');
+    const state = await tx.get('cfg/state');
+    if (!memberCanEdit(latest, role, state?.phase) || (latest.revision || '') !== revision) throw Error('자료가 갱신되었습니다. 새로고침 후 다시 수정해 주세요.');
     tx.set(k, { ...latest, draft: rows, savedAt: new Date().toISOString() });
   }))).then(ok => {
     if (ok && draftBuffers.get(group) === buffer) {
-      S.docs['g_' + GKEY[group]] = {...gdoc(group), draft: rows};
+      if (memberCanEdit(gdoc(group), role, st().phase) && (gdoc(group).revision || '') === revision) {
+        S.docs['g_' + GKEY[group]] = {...gdoc(group), draft: rows};
+      }
       draftBuffers.delete(group);
     }
     return ok;
   });
-  groupWrites.set(group, task);
+  groupWrites.set(group, { revision, task });
   return task;
 }
-async function flushGroupWrites() {
-  const task = groupWrites.get(S.group);
-  return task ? await task : true;
+async function finishMemberReview() {
+  const group = S.group, role = S.role, revision = S.editRevision;
+  if (!memberCanEdit(gdoc(group), role, st().phase)) return;
+  const pending = groupWrites.get(group);
+  if (pending?.revision === revision && !(await pending.task)) return;
+  const d = gdoc(group);
+  if (!memberCanEdit(d, role, st().phase) || (d.revision || '') !== revision) {
+    toast('자료가 변경되었습니다. 내용을 다시 확인해 주세요.');
+    return;
+  }
+  const shown = canonicalString(working(group)), second = role === 'member2';
+  confirmBox(MEMBER_ROLES[role] + ' 크로스체킹을 마칠까요?', '<b>' + H(group) + '</b> 검토 결과를 ' +
+    (second ? '법무부장에게 전달합니다.' : '2학년 법무부원에게 전달합니다.'), '완료', async () => {
+    const path = 'cur/g_' + GKEY[group];
+    await save(() => store.transaction(async tx => {
+      const state = await tx.get('cfg/state'), latest = await tx.get(path);
+      const rows = latest?.draft || latest?.rows;
+      if (!memberCanEdit(latest, role, state?.phase) || (latest.revision || '') !== revision || canonicalString(rows) !== shown) {
+        throw Error('자료가 변경되었습니다. 내용을 다시 확인해 주세요.');
+      }
+      const now = new Date().toISOString();
+      tx.set(path, { ...latest, rows: E.expandSourceRows(ctx(), rows), draft: null, revision: uid(),
+        firstDoneAt: second ? latest.firstDoneAt || latest.doneAt || now : now,
+        done: second, doneAt: second ? now : null });
+    }), MEMBER_ROLES[role] + ' 크로스체크를 완료했습니다.');
+  });
 }
 async function saveDraft() {
-  if (!S.group || gdoc(S.group)?.done) return;
+  if (!memberCanEdit(gdoc(S.group), S.role, st().phase)) return;
   // Clicking blurs the active cell first, so its change handler joins the queue.
   const rows = scopeRows('group');
   const ok = await saveScope('group', rows);
@@ -680,7 +729,7 @@ app.addEventListener('click', async ev => {
     case 'role': chiefVersion=''; setRole(b.dataset.role, ''); break;
     case 'ledger': { const url = new URL('./ledger/', import.meta.url); if (LOCAL) url.searchParams.set('test', ''); window.location.assign(url.href); break; }
     case 'seat-arranger': window.location.assign(new URL('./seats/', import.meta.url).href); break;
-    case 'pick': setRole('member', b.dataset.g); break;
+    case 'pick': setRole(S.role, b.dataset.g); break;
     case 'rosterStart': confirmBox('정말 초기화하시겠습니까?', '새 명단을 확인하고 저장하면 재학생 리스트가 교체됩니다.', '계속', ()=>{S.view='roster';S.rosterDraft=null;render();}); break;
     case 'rosterCancel': S.view='';S.rosterDraft=null;render();break;
     case 'rosterParse': parseRosterDraft();break;
@@ -697,16 +746,16 @@ app.addEventListener('click', async ev => {
     case 'bulkSelect': selectBulkRows(b.closest('.post'), box => b.hasAttribute('data-review') ? box.dataset.needsReview === '1' : box.dataset.date === b.dataset.date); break;
     case 'bulkApply': await applyBulkEdits(b.closest('[data-bulk-table]')); break;
     case 'saveDraft': await saveDraft(); break;
-    case 'memberDone': if (!(await flushGroupWrites())) break; confirmBox('크로스체킹을 마칠까요?', '<b>' + H(S.group) + '</b>의 수정 내용이 통합 정리본에 반영되고, 이후에는 고칠 수 없습니다.', '완료', async () => {
-      const k = 'cur/g_' + GKEY[S.group]; const d = gdoc(S.group);
+    case 'memberDone': await finishMemberReview(); break;
+    case 'reopen': confirmBox(b.dataset.g + ' 다시 열기', '이 업무를 1학년 검토 단계로 돌립니다. 1학년과 2학년이 다시 검토해야 하며, <b>완성 정리본에서 법무부장이 직접 고친 내용은 지워집니다.</b>', '다시 열기', async () => {
+      const g = b.dataset.g, path = 'cur/g_' + GKEY[g];
       await save(() => store.transaction(async tx => {
-        const latest = await tx.get(k);
-        if (!latest || (latest.revision || '') !== S.editRevision) throw Error('새 글이 추가되었습니다. 새로고침 후 확인해 주세요.');
-        tx.set(k, { ...latest, rows: E.expandSourceRows(ctx(), latest.draft || latest.rows), draft: null, done: true, doneAt: new Date().toISOString() });
+        const d = await tx.get(path), state = await tx.get('cfg/state');
+        if (!d || memberReviewStage(d) === 'first') return;
+        tx.set(path, { ...d, rows: d.draft || d.rows, draft: null, noPosts: false, firstDoneAt: null, done: false, doneAt: null, revision: uid() });
+        tx.del('cur/final');
+        tx.set('cfg/state', { ...state, phase: 'review' });
       }));
-    }); break;
-    case 'reopen': confirmBox(b.dataset.g + ' 다시 열기', '이 담당을 다시 고칠 수 있게 엽니다. 크로스체크 단계로 돌아가며, <b>완성 정리본·법정리스트 화면에서 법무부장이 직접 고친 내용은 지워집니다</b> (추가 기소는 남습니다).', '다시 열기', async () => {
-      const g = b.dataset.g; await save(() => store.batch([['cur/g_' + GKEY[g], { done: false, draft: null }, true], ['cur/final', null], ['cfg/state', { phase: 'review' }, true]]));
     }); break;
     case 'toExtras': await goToExtras(); break;
     case 'backFinal': await save(() => store.merge('cfg/state', { phase: 'review' })); break;
