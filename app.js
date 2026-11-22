@@ -244,6 +244,15 @@ function dropZone(kind, label, multiple) {
   return '<label class="drop" data-drop="' + kind + '"><input type="file" accept="' + (kind==='roster'?'.xlsx,.xlsm,.txt,.csv':'.xlsx,.xlsm') + '" ' + (multiple ? 'multiple ' : '') + 'data-file="' + kind + '" hidden><span>' + H(label) + '</span></label>';
 }
 // ---------------------------------------------------------------- 1) 붙여넣기
+function copyInstructions() {
+  return '<p><a class="outline install-link" href="help.html" target="_blank" rel="noopener">법정글 복사 설치·사용법</a></p>' +
+    '<p class="muted">인트라넷 법정게시판에서 즐겨찾기 <b>법정글 복사</b>를 실행하세요. 담당 글에 체크한 뒤 <b>선택한 글 가져오기 → 복사하기</b>를 누르고 이 사이트의 담당 업무 칸에 붙여넣으세요.</p>';
+}
+function memberPasteFields(group) {
+  const id = 'paste-' + GKEY[group];
+  return '<label>' + H(group) + ' 글 붙여넣기<textarea id="' + id + '" class="paste" placeholder="복사한 법정글을 여기에 붙여넣으세요" data-keep="member-' + id + '"></textarea></label>' +
+    '<button class="primary" data-act="organize" data-g="' + group + '"' + (S.saving ? ' disabled' : '') + '>등록하고 크로스체크</button>';
+}
 function viewPaste() {
   const sun = sundayOf();
   return steps(1) + '<div class="panel"><h2>업무별 글 붙여넣기</h2>' +
@@ -259,22 +268,35 @@ function viewPaste() {
     }).join('') + '</div>';
 }
 async function doOrganize(group, empty = false) {
-  if (S.saving) return;
+  const member = S.role === 'member';
+  if (S.saving || !Object.hasOwn(GKEY, group) ||
+      !(member ? group === S.group && !empty : S.role === 'chief' && S.chiefUnlocked)) return;
   const input = document.getElementById('paste-' + GKEY[group]);
-  const sunday = document.getElementById('sunday').value || sundayOf();
-  const posts = empty ? [] : E.parsePasted(input.value).map(post => ({ ...post, uploadGroup: group }));
+  if (!empty && !input) return;
+  const submitted = input?.value;
+  const sunday = (member ? '' : document.getElementById('sunday')?.value) || sundayOf();
+  const posts = empty ? [] : E.parsePasted(submitted).map(post => ({ ...post, uploadGroup: group }));
   if (!empty && !posts.length) { toast('붙여넣은 글을 읽지 못했습니다.', 5000); return; }
   const monday = E.addDays(sunday, -6);
   const wk = E.extractWeek(Object.assign(E.makeCtx(S.docs.refs, sunday), {femaleDefaultDate: st().courtMeta?.courtDate || sunday}), posts, monday, sunday);
-  if (!empty && !wk.posts.length) { toast('해당 주의 글이 없습니다. 기준 일요일을 확인하세요.', 5000); return; }
+  if (!empty && !wk.posts.length) { toast('표시된 주간에 올라온 글이 없습니다. 게시일을 확인해 주세요.', 5000); return; }
   await save(async () => {
+    if (member) {
+      const pending = groupWrites.get(group);
+      if (pending?.revision === (gdoc(group)?.revision || '') && !(await pending.task)) {
+        throw Error('이전 수정 내용을 저장한 뒤 글을 추가해 주세요.');
+      }
+    }
     await store.transaction(async tx => {
       const state = await tx.get('cfg/state') || {};
       const previous = await tx.get('cur/posts') || {};
       const path = 'cur/g_' + GKEY[group];
       const d = await tx.get(path);
       if (state.phase && !['idle', 'review'].includes(state.phase)) throw Error('크로스체크 단계에서 글을 추가해 주세요.');
-      if (state.phase === 'review' && state.sunday !== sunday) throw Error('진행 중인 주의 날짜가 변경되었습니다. 새로고침해 주세요.');
+      if ((state.phase === 'review' && state.sunday !== sunday) || (member && state.sunday && state.sunday !== sunday)) {
+        throw Error('진행 중인 주의 날짜가 변경되었습니다. 새로고침해 주세요.');
+      }
+      if (member && d && memberReviewStage(d) !== 'first') throw Error('이미 1학년 검토를 마친 업무입니다.');
       if (empty && d) throw Error('이미 자료가 등록된 업무입니다.');
       const existing = previous.posts || [];
       const seen = new Set(existing.map(p => String(p.id)));
@@ -287,11 +309,11 @@ async function doOrganize(group, empty = false) {
       tx.set(path, { ...(d || {}), rows, draft: null, done: empty, doneAt: empty ? now : null, noPosts: empty, firstDoneAt: null, revision, createdAt: d && d.createdAt || now, updatedAt: now });
       tx.set('cur/posts', { ...previous, posts: existing.concat(added), monday, sunday, createdAt: previous.createdAt || now });
       tx.set('cfg/state', { ...state, phase: 'review', sunday, monday, startedAt: state.startedAt || now, listNo: state.listNo || 1 });
-      tx.del('cur/final');
+      if (!member) tx.del('cur/final');
     });
-    input.value = '';
+    if (input && input.value === submitted) input.value = '';
     const currentInput = document.getElementById('paste-' + GKEY[group]);
-    if (currentInput) currentInput.value = '';
+    if (currentInput && currentInput.value === submitted) currentInput.value = '';
   }, group + ' 자료를 등록했습니다');
 }
 // ---------------------------------------------------------------- 2) 크로스체크 대기
@@ -454,12 +476,19 @@ function viewMember() {
   if (!refsReady()) return '<div class="center-box"><h2>아직 정리된 글이 없습니다</h2><p class="muted">법무부장이 글을 정리하면 여기에 나타납니다.</p></div>';
   const role = S.role, grade = MEMBER_STAGES[role], active = st().phase === 'review';
   const back = '<button class="ghost" data-act="role" data-role="' + role + '">담당 다시 고르기</button>';
-  if (!S.group) return '<div class="center-box"><h2>담당을 고르세요</h2><div class="grid4">' + E.GROUPS.map(g =>
+  if (!S.group) return '<div class="center-box"><h2>담당을 고르세요</h2>' +
+    (grade === 'first' ? copyInstructions() : '') + '<div class="grid4">' + E.GROUPS.map(g =>
     '<button class="primary huge g" data-act="pick" data-g="' + g + '">' + g + '<small>' + gradeStatus(gdoc(g), grade, active) + '</small></button>'
   ).join('') + '</div><p class="muted small">' + weekLine() + '</p></div>';
   const d = gdoc(S.group), stage = memberReviewStage(d);
+  const canUpload = grade === 'first' && (active || !st().phase || st().phase === 'idle') && (!d || stage === 'first');
+  const sun = sundayOf();
+  const upload = canUpload ? '<section class="panel"><div class="head-row"><h2>' + H(S.group) + ' 글 등록</h2><span class="grow"></span>' +
+    (!d ? back : '') + '</div>' + copyInstructions() +
+    '<p class="muted">게시일 ' + E.fmtMD(E.addDays(sun, -6)) + '(월) ~ ' + E.fmtMD(sun) + '(일)</p>' + memberPasteFields(S.group) + '</section>' : '';
   if (!memberCanEdit(d, role, st().phase)) {
-    const message = !d ? '법무부장이 이 업무 자료를 정리하면 자동으로 표시됩니다.' :
+    if (upload) return upload;
+    const message = !d ? '1학년이 담당 글을 등록하고 크로스체크를 완료하면 여기에 표시됩니다.' :
       d.noPosts ? '이번 주에는 검토할 글이 없습니다.' :
       stage === 'complete' ? '두 학년의 크로스체크가 완료되었습니다.' :
       !active ? '이 업무는 최종 검토 이후 단계로 넘어갔습니다.' :
@@ -473,7 +502,7 @@ function viewMember() {
   const others = E.GROUPS.filter(g => g !== S.group).flatMap(g => committed(g));
   const res = computeFor(mine.concat(others)); const sm = statusMap(res);
   const cnt = counts(rowsForGroup(res.rows,S.group));
-  return '<div class="panel"><div class="head-row"><h2>' + H(S.group) + ' <span class="muted small">' + GDESC[S.group] + '</span></h2><span class="grow"></span>' +
+  return upload + '<div class="panel"><div class="head-row"><h2>' + H(S.group) + ' 크로스체크</h2><span class="grow"></span>' +
     back + '<button class="outline" data-act="saveDraft">임시저장</button><button class="primary" data-act="memberDone">' + MEMBER_ROLES[role] + ' 크로스체킹 완료</button></div>' +
     '<p class="muted">' + next + ' 원문과 나란히 보며 이름·날짜·항목·점수를 고치세요. 수정 내용은 자동 저장됩니다.</p>' + summaryChips(cnt) + legend() +
     rowsTable(mine, sm, { scope: 'group' }) + '<div class="foot-row"><button class="outline big" data-act="saveDraft">임시저장</button><button class="primary big" data-act="memberDone">' + MEMBER_ROLES[role] + ' 크로스체킹 완료</button></div></div>';

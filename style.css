@@ -31,6 +31,7 @@ button { cursor: pointer; border-radius: var(--radius); border: 1px solid transp
 .primary:hover { background: var(--accent-2); }
 .outline { border-color: var(--accent); color: var(--accent); background: #fff; font-weight: 600; }
 .ghost { border-color: var(--line); background: #fff; }
+.install-link { display: inline-block; border: 1px solid; border-radius: var(--radius); padding: 7px 14px; text-decoration: none; }
 .ghost:hover, .outline:hover { background: var(--accent-soft); }
 .danger { color: var(--err); border-color: #f1b8b2; }
 button.small { padding: 4px 10px; font-size: 13px; }
