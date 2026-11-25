@@ -94,21 +94,40 @@ export async function writeEditedCourt(buffer,source,list,info=null) {
   }).join('')+'</row>';
  }).join('');
  const head=original.filter(r=>r.r<=source.hdr).map(r=>r.xml).join('');
- let out=x.replace(data[0],'<sheetData>'+head+bodies+'</sheetData>');
+ let out=x.replace(data[0],()=>'<sheetData>'+head+bodies+'</sheetData>');
  const merges=[...x.matchAll(/<mergeCell\s+ref="([A-Z]+)(\d+):([A-Z]+)(\d+)"\s*\/>/g)].filter(m=>Number(m[4])<=source.hdr).map(m=>m[0]);
  for(const [start,end] of groupEnds) if(end>start) merges.push(`<mergeCell ref="C${source.hdr+1+start}:C${source.hdr+1+end}"/>`);
  const mergeXml=merges.length?`<mergeCells count="${merges.length}">${merges.join('')}</mergeCells>`:'';
  if(/<mergeCells\b/.test(out))out=out.replace(/<mergeCells\b[^>]*>[\s\S]*?<\/mergeCells>/,mergeXml);
- else out=out.replace('</sheetData>','</sheetData>'+mergeXml);
+ else if(mergeXml) {
+  // Worksheet elements such as autoFilter precede mergeCells in Excel's schema.
+  const following=/<(?:phoneticPr|conditionalFormatting|dataValidations|hyperlinks|printOptions|pageMargins|pageSetup|headerFooter|rowBreaks|colBreaks|customProperties|cellWatches|ignoredErrors|smartTags|drawing|legacyDrawing|legacyDrawingHF|picture|oleObjects|controls|webPublishItems|tableParts|extLst)(?=[\s/>])|<\/worksheet>/;
+  out=out.replace(following,match=>mergeXml+match);
+ }
  const last=Math.max(source.hdr,source.hdr+list.length);
  out=out.replace(/<dimension\s+[^>]*\/>/,`<dimension ref="A1:H${last}"/>`);
  z.file(source.path,out);
- let wb=await z.file('xl/workbook.xml').async('string');
- wb=wb.replace(/(<definedName\b[^>]*name="_xlnm.Print_Area"[^>]*localSheetId="0"[^>]*>)([^<]*)(<\/definedName>)/,(m,a,b,c)=>a+b.replace(/\$H\$\d+/g,'$H$'+last)+c);
- wb=wb.replace(/<calcPr\b[^>]*\/?\s*>/,'');wb=wb.replace('</workbook>','<calcPr fullCalcOnLoad="1" forceFullCalc="1"/></workbook>');z.file('xl/workbook.xml',wb);
+ const workbookPath='xl/workbook.xml';
+ let workbook=await z.file(workbookPath).async('string');
+ workbook=workbook.replace(/(<definedName\b[^>]*name="_xlnm.Print_Area"[^>]*localSheetId="0"[^>]*>)([^<]*)(<\/definedName>)/,
+  (match,open,area,close)=>open+area.replace(/\$H\$\d+/g,()=>'$H$'+last)+close);
+ const calcPattern=/<calcPr\b([^>]*?)(?:\/\s*>|>\s*<\/calcPr>)/;
+ const calcAttrs=(calcPattern.exec(workbook)?.[1]||'').replace(/\s+(?:fullCalcOnLoad|forceFullCalc)="[^"]*"/g,'');
+ const calcPr='<calcPr'+calcAttrs+' fullCalcOnLoad="1" forceFullCalc="1"/>';
+ // calcPr follows definedNames and precedes the optional workbook extensions.
+ const afterCalc=/<(?:oleSize|customWorkbookViews|pivotCaches|smartTagPr|smartTagTypes|webPublishing|fileRecoveryPr|webPublishObjects|extLst)(?=[\s/>])|<\/workbook>/;
+ workbook=workbook.replace(calcPattern,'').replace(afterCalc,match=>calcPr+match);
+ z.file(workbookPath,workbook);
+ // Most rewritten cells use inline strings. The original shared-string totals
+ // no longer describe the workbook, but other sheets may still use its entries.
+ const sharedStrings=z.file('xl/sharedStrings.xml');
+ if(sharedStrings) {
+  const strings=await sharedStrings.async('string');
+  z.file(sharedStrings.name,strings.replace(/<sst\b[^>]*>/,tag=>tag.replace(/\s+(?:count|uniqueCount)="\d+"/g,'')));
+ }
  // Stale calculation chains refer to old row positions. Excel rebuilds them on open.
  z.remove('xl/calcChain.xml');
  let rel=await z.file('xl/_rels/workbook.xml.rels').async('string');rel=rel.replace(/<Relationship\b[^>]*Type="[^"]*\/calcChain"[^>]*\/>/g,'');z.file('xl/_rels/workbook.xml.rels',rel);
  let ct=await z.file('[Content_Types].xml').async('string');ct=ct.replace(/<Override\b[^>]*PartName="\/xl\/calcChain.xml"[^>]*\/>/g,'');z.file('[Content_Types].xml',ct);
- return z.generateAsync({type:'blob',mimeType:source.macro?'application/vnd.ms-excel.sheet.macroEnabled.12':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+ return z.generateAsync({type:'blob',compression:'DEFLATE',mimeType:source.macro?'application/vnd.ms-excel.sheet.macroEnabled.12':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
 }

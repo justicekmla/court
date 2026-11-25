@@ -5,7 +5,7 @@ import {verifyChiefPassword,parseChiefSetup,validChiefVerifier} from './chief-au
 import { sourceStamp, rowsForGroup, combinedRows, currentStamps as stampsForGroups, reviewSnapshotMatches, memberReviewStage, canonicalString, ownedRows, scopedPosts, planPostUpload } from './review.js?v=post-routing-20261122';
 import * as E from './engine.js?v=manual-roster-20261123';
 import * as M from './manual.js?v=morning-day-20261122';
-import { createVersion2 } from './version2.js?v=manual-roster-20261123';
+import { createVersion2 } from './version2.js?v=excel-export-20261125';
 import * as IO from './io.js?v=morning-day-20261122';
 import { firebaseStore, localStore } from './store.js?v=uploads-20261101-1';
 

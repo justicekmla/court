@@ -44,11 +44,14 @@ test('version1 exports metadata into original header cells and leaves charges un
 test('version2 updates the same cells and preserves original VBA and other package parts',async()=>{
  const original=await writeCourtList(rows,{listNo:3,sunday,header:{labels:['','',''],names:['','',''],notice:'old'}});
  const z=await JSZip.loadAsync(await original.arrayBuffer());z.file('xl/vbaProject.bin',new Uint8Array([9,8,7]));z.file('xl/retained.xml','unchanged');
+ const wbPath='xl/workbook.xml',wb=await z.file(wbPath).async('string');
+ z.file(wbPath,wb.replace('</workbook>','<calcPr calcId="191029"/><extLst/></workbook>'));
  const buffer=await z.generateAsync({type:'uint8array'}),source=await readCourtFile(buffer,'test.xlsm',sunday);
  const output=await writeEditedCourt(buffer,source,source.rows,info),out=await output.arrayBuffer(),[sheet]=await readWorkbook(out);
  assert.equal(cell(sheet,1,1).v,'Court List 37 Ver.2');assert.equal(cell(sheet,1,8).v,meta.teacher);
  assert.equal(cell(sheet,2,8).v,meta.chief);assert.equal(cell(sheet,3,8).v,meta.chair);assert.equal(cell(sheet,4,1).v,'12/4/2026\n'+buildNotice(meta));
  const saved=await JSZip.loadAsync(out);assert.deepEqual([...await saved.file('xl/vbaProject.bin').async('uint8array')],[9,8,7]);assert.equal(await saved.file('xl/retained.xml').async('string'),'unchanged');
+ assert.match(await saved.file(wbPath).async('string'),/<\/definedNames><calcPr calcId="191029" fullCalcOnLoad="1" forceFullCalc="1"\/><extLst\/><\/workbook>/);
 });
 test('text rosters accept grade or cohort headers and distinguish names across cohorts',()=>{
  const a=parseRosterText('이름\t기수\n가상학생\t29\n가상학생\t31',sunday);assert.deepEqual(a.roster.map(r=>[r.name,r.grade]),[['가상학생29',3],['가상학생31',1]]);
